@@ -6,9 +6,6 @@
     <title>Bloomington Warehouse Ownership Network Map</title>
     
     <link rel="stylesheet" href="https://js.arcgis.com/4.27/esri/themes/light/main.css">
-    <script src="https://js.arcgis.com/4.27/"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
-    
     <style>
         html, body, #viewDiv {
             padding: 0;
@@ -83,6 +80,8 @@
             font-size: 12px;
         }
     </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
+    <script src="https://js.arcgis.com/4.27/"></script>
 </head>
 <body>
     <div id="viewDiv"></div>
@@ -139,477 +138,479 @@
         </div>
     </div>
 
-    <script>
+    <script type="module">
         // CONFIGURATION: Replace this with your GitHub raw CSV URL
-        const CSV_URL = 'https://raw.githubusercontent.com/pluricalifornia/BloomingtonWarehouses/main/data/WarehouseTracker.csv';
-        // Example: 'https://raw.githubusercontent.com/username/warehouse-data/main/WarehouseTracker.csv'
+        const CSV_URL = 'https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/data/WarehouseTracker.csv';
+        // Example: 'https://raw.githubusercontent.com/username/warehouse-data/main/data/WarehouseTracker.csv'
         
-        require([
-            "esri/Map",
-            "esri/views/MapView",
-            "esri/Graphic",
-            "esri/layers/GraphicsLayer",
-            "esri/geometry/Point",
-            "esri/geometry/Polyline",
-            "esri/symbols/SimpleMarkerSymbol",
-            "esri/symbols/SimpleLineSymbol",
-            "esri/symbols/TextSymbol",
-            "esri/widgets/Zoom",
-            "esri/geometry/support/webMercatorUtils"
-        ], function(Map, MapView, Graphic, GraphicsLayer, Point, Polyline, 
-                   SimpleMarkerSymbol, SimpleLineSymbol, TextSymbol, Zoom, webMercatorUtils) {
+        // Import ArcGIS modules
+        import Map from "https://js.arcgis.com/4.27/@arcgis/core/Map.js";
+        import MapView from "https://js.arcgis.com/4.27/@arcgis/core/views/MapView.js";
+        import Graphic from "https://js.arcgis.com/4.27/@arcgis/core/Graphic.js";
+        import GraphicsLayer from "https://js.arcgis.com/4.27/@arcgis/core/layers/GraphicsLayer.js";
+        import Point from "https://js.arcgis.com/4.27/@arcgis/core/geometry/Point.js";
+        import Polyline from "https://js.arcgis.com/4.27/@arcgis/core/geometry/Polyline.js";
+        import SimpleMarkerSymbol from "https://js.arcgis.com/4.27/@arcgis/core/symbols/SimpleMarkerSymbol.js";
+        import SimpleLineSymbol from "https://js.arcgis.com/4.27/@arcgis/core/symbols/SimpleLineSymbol.js";
+        import TextSymbol from "https://js.arcgis.com/4.27/@arcgis/core/symbols/TextSymbol.js";
 
-            // Initialize map
-            const map = new Map({
-                basemap: "gray-vector"
-            });
+        // City coordinates (approximate)
+        const cityCoords = {
+            "Bloomington, CA": [-117.396, 34.070],
+            "Lemon Heights, CA": [-117.823, 33.765],
+            "Newport Beach, CA": [-117.928, 33.618],
+            "Annapolis, MD": [-76.492, 38.978],
+            "Highland Park, TX": [-96.792, 32.834],
+            "Bethesda, MD": [-77.094, 38.984],
+            "Bethseda, MD": [-77.094, 38.984], // Handle typo in data
+            "Evergreen, CO": [-105.321, 39.633],
+            "Pacific Heights, CA": [-122.447, 37.794],
+            "San Francisco, CA": [-122.419, 37.774],
+            "Denver, CO": [-104.990, 39.739],
+            "Irvine, CA": [-117.826, 33.684],
+            "Costa Mesa, CA": [-117.919, 33.641],
+            "City of Industry, CA": [-117.958, 34.019],
+            "Santa Ana, CA": [-117.868, 33.745],
+            "Newport, CA": [-117.928, 33.618],
+            "Dallas, TX": [-96.797, 32.777],
+            "Los Angeles, CA": [-118.243, 34.052],
+            "Chicago, IL": [-87.629, 41.878],
+            "New York, NY": [-74.006, 40.713],
+            "Washington, DC": [-77.036, 38.895]
+        };
 
-            const view = new MapView({
-                container: "viewDiv",
-                map: map,
-                center: [-117.4, 34.0], // Bloomington, CA area
-                zoom: 9
-            });
-
-            // Create graphics layers
-            const edgeLayer = new GraphicsLayer({ title: "Connections" });
-            const nodeLayer = new GraphicsLayer({ title: "Entities" });
-            const labelLayer = new GraphicsLayer({ title: "Labels" });
+        // Function to get coordinates with offset for multiple entities
+        const entityOffsets = {};
+        function getCoordinates(location, entityName) {
+            let coords = cityCoords[location];
+            if (!coords) {
+                // Default coordinates with random offset
+                coords = [-117.4 + (Math.random() - 0.5) * 2, 34.0 + (Math.random() - 0.5) * 2];
+            }
             
-            map.addMany([edgeLayer, nodeLayer, labelLayer]);
+            // Add offset for multiple entities in same location
+            const key = location + "|" + entityName;
+            if (!entityOffsets[key]) {
+                const count = Object.keys(entityOffsets).filter(k => k.startsWith(location)).length;
+                const angle = (count * 72) * Math.PI / 180;
+                const offset = 0.1;
+                entityOffsets[key] = [
+                    coords[0] + offset * Math.cos(angle),
+                    coords[1] + offset * Math.sin(angle)
+                ];
+            }
+            return entityOffsets[key];
+        }
 
-            // City coordinates (approximate)
-            const cityCoords = {
-                "Bloomington, CA": [-117.396, 34.070],
-                "Lemon Heights, CA": [-117.823, 33.765],
-                "Newport Beach, CA": [-117.928, 33.618],
-                "Annapolis, MD": [-76.492, 38.978],
-                "Highland Park, TX": [-96.792, 32.834],
-                "Bethesda, MD": [-77.094, 38.984],
-                "Bethseda, MD": [-77.094, 38.984], // Handle typo in data
-                "Evergreen, CO": [-105.321, 39.633],
-                "Pacific Heights, CA": [-122.447, 37.794],
-                "San Francisco, CA": [-122.419, 37.774],
-                "Denver, CO": [-104.990, 39.739],
-                "Irvine, CA": [-117.826, 33.684],
-                "Costa Mesa, CA": [-117.919, 33.641],
-                "City of Industry, CA": [-117.958, 34.019],
-                "Santa Ana, CA": [-117.868, 33.745],
-                "Newport, CA": [-117.928, 33.618],
-                "Dallas, TX": [-96.797, 32.777],
-                "Los Angeles, CA": [-118.243, 34.052],
-                "Chicago, IL": [-87.629, 41.878],
-                "New York, NY": [-74.006, 40.713],
-                "Washington, DC": [-77.036, 38.895]
-            };
-
-            // Function to get coordinates with offset for multiple entities
-            const entityOffsets = {};
-            function getCoordinates(location, entityName) {
-                let coords = cityCoords[location];
-                if (!coords) {
-                    // Default coordinates with random offset
-                    coords = [-117.4 + (Math.random() - 0.5) * 2, 34.0 + (Math.random() - 0.5) * 2];
+        // Parse CSV data from GitHub
+        async function loadData() {
+            try {
+                // Check if URL is configured
+                if (CSV_URL.includes('YOUR_USERNAME')) {
+                    throw new Error('Please configure the CSV_URL with your GitHub repository URL');
                 }
                 
-                // Add offset for multiple entities in same location
-                const key = location + "|" + entityName;
-                if (!entityOffsets[key]) {
-                    const count = Object.keys(entityOffsets).filter(k => k.startsWith(location)).length;
-                    const angle = (count * 72) * Math.PI / 180;
-                    const offset = 0.1;
-                    entityOffsets[key] = [
-                        coords[0] + offset * Math.cos(angle),
-                        coords[1] + offset * Math.sin(angle)
-                    ];
+                // Fetch CSV from GitHub
+                const response = await fetch(CSV_URL);
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch CSV: ${response.status}`);
                 }
-                return entityOffsets[key];
-            }
+                
+                const csvText = await response.text();
+                
+                // Fix header issue
+                const lines = csvText.split('\n');
+                const fixedHeader = "Category,Assessor parcel number,Building classification,Year built/approved,Acres,Building sq.ft.,Developer,DevOriginCity,Purchaser/Merger,Transaction Type,Leasee,PurchaserOriginCity,LeaseeOriginCity,Endpoint";
+                lines[0] = fixedHeader;
+                const fixedCsv = lines.join('\n');
+                
+                const parsed = Papa.parse(fixedCsv, {
+                    header: true,
+                    dynamicTyping: true,
+                    skipEmptyLines: true
+                });
 
-            // Parse CSV data from GitHub
-            async function loadData() {
-                try {
-                    // Check if URL is configured
-                    if (CSV_URL.includes('YOUR_USERNAME')) {
-                        throw new Error('Please configure the CSV_URL with your GitHub repository URL');
+                const nodes = new Map();
+                const edges = [];
+
+                // Add Bloomington as central node
+                nodes.set("Bloomington, CA", {
+                    name: "Bloomington, CA",
+                    type: "city",
+                    coords: cityCoords["Bloomington, CA"],
+                    connections: 0,
+                    properties: []
+                });
+
+                // Process each row
+                parsed.data.forEach(row => {
+                    // Process Developer
+                    if (row.Developer && row.Developer !== "TBD" && row.Developer.trim() !== "") {
+                        const devOrigin = row.DevOriginCity || "Unknown";
+                        
+                        if (!nodes.has(row.Developer)) {
+                            nodes.set(row.Developer, {
+                                name: row.Developer,
+                                type: "developer",
+                                coords: getCoordinates(devOrigin, row.Developer),
+                                origin: devOrigin,
+                                connections: 0
+                            });
+                        }
+                        
+                        if (!nodes.has(devOrigin) && devOrigin !== "Unknown" && devOrigin !== "TBD") {
+                            nodes.set(devOrigin, {
+                                name: devOrigin,
+                                type: "city",
+                                coords: cityCoords[devOrigin] || getCoordinates(devOrigin, devOrigin),
+                                connections: 0
+                            });
+                        }
+                        
+                        // Add edges
+                        if (devOrigin !== "Unknown" && devOrigin !== "TBD") {
+                            edges.push({
+                                from: devOrigin,
+                                to: row.Developer,
+                                type: "headquartered",
+                                category: "developer"
+                            });
+                        }
+                        
+                        edges.push({
+                            from: row.Developer,
+                            to: "Bloomington, CA",
+                            type: "develops",
+                            property: row["Assessor parcel number"],
+                            acres: row.Acres,
+                            sqft: row["Building sq.ft."]
+                        });
+                        
+                        nodes.get("Bloomington, CA").properties.push({
+                            parcel: row["Assessor parcel number"],
+                            developer: row.Developer,
+                            acres: row.Acres,
+                            sqft: row["Building sq.ft."]
+                        });
                     }
                     
-                    // Fetch CSV from GitHub
-                    const response = await fetch(CSV_URL);
-                    if (!response.ok) {
-                        throw new Error(`Failed to fetch CSV: ${response.status}`);
-                    }
-                    
-                    const csvText = await response.text();
-                    
-                    // Fix header issue
-                    const lines = csvText.split('\n');
-                    const fixedHeader = "Category,Assessor parcel number,Building classification,Year built/approved,Acres,Building sq.ft.,Developer,DevOriginCity,Purchaser/Merger,Transaction Type,Leasee,PurchaserOriginCity,LeaseeOriginCity,Endpoint";
-                    lines[0] = fixedHeader;
-                    const fixedCsv = lines.join('\n');
-                    
-                    const parsed = Papa.parse(fixedCsv, {
-                        header: true,
-                        dynamicTyping: true,
-                        skipEmptyLines: true
-                    });
-
-                    const nodes = new Map();
-                    const edges = [];
-
-                    // Add Bloomington as central node
-                    nodes.set("Bloomington, CA", {
-                        name: "Bloomington, CA",
-                        type: "city",
-                        coords: cityCoords["Bloomington, CA"],
-                        connections: 0,
-                        properties: []
-                    });
-
-                    // Process each row
-                    parsed.data.forEach(row => {
-                        // Process Developer
-                        if (row.Developer && row.Developer !== "TBD" && row.Developer.trim() !== "") {
-                            const devOrigin = row.DevOriginCity || "Unknown";
-                            
-                            if (!nodes.has(row.Developer)) {
-                                nodes.set(row.Developer, {
-                                    name: row.Developer,
-                                    type: "developer",
-                                    coords: getCoordinates(devOrigin, row.Developer),
-                                    origin: devOrigin,
-                                    connections: 0
-                                });
-                            }
-                            
-                            if (!nodes.has(devOrigin) && devOrigin !== "Unknown" && devOrigin !== "TBD") {
-                                nodes.set(devOrigin, {
-                                    name: devOrigin,
-                                    type: "city",
-                                    coords: cityCoords[devOrigin] || getCoordinates(devOrigin, devOrigin),
-                                    connections: 0
-                                });
-                            }
-                            
-                            // Add edges
-                            if (devOrigin !== "Unknown" && devOrigin !== "TBD") {
-                                edges.push({
-                                    from: devOrigin,
-                                    to: row.Developer,
-                                    type: "headquartered",
-                                    category: "developer"
-                                });
-                            }
-                            
+                    // Process Purchaser
+                    if (row["Purchaser/Merger"] && row["Purchaser/Merger"] !== "TBD" && 
+                        row["Purchaser/Merger"] !== " TX\"" && row["Purchaser/Merger"] !== "Purchase" &&
+                        row["Purchaser/Merger"].trim() !== "") {
+                        const purchaser = row["Purchaser/Merger"].trim();
+                        const purchOrigin = row.PurchaserOriginCity || "Unknown";
+                        
+                        if (!nodes.has(purchaser)) {
+                            nodes.set(purchaser, {
+                                name: purchaser,
+                                type: "purchaser",
+                                coords: getCoordinates(purchOrigin, purchaser),
+                                origin: purchOrigin,
+                                connections: 0
+                            });
+                        }
+                        
+                        if (!nodes.has(purchOrigin) && purchOrigin !== "Unknown" && purchOrigin !== "TBD") {
+                            nodes.set(purchOrigin, {
+                                name: purchOrigin,
+                                type: "city",
+                                coords: cityCoords[purchOrigin] || getCoordinates(purchOrigin, purchOrigin),
+                                connections: 0
+                            });
+                        }
+                        
+                        if (purchOrigin !== "Unknown" && purchOrigin !== "TBD") {
+                            edges.push({
+                                from: purchOrigin,
+                                to: purchaser,
+                                type: "headquartered",
+                                category: "purchaser"
+                            });
+                        }
+                        
+                        if (row.Developer && row.Developer !== "TBD") {
                             edges.push({
                                 from: row.Developer,
-                                to: "Bloomington, CA",
-                                type: "develops",
-                                property: row["Assessor parcel number"],
-                                acres: row.Acres,
-                                sqft: row["Building sq.ft."]
+                                to: purchaser,
+                                type: row["Transaction Type"] || "purchase",
+                                property: row["Assessor parcel number"]
                             });
-                            
-                            nodes.get("Bloomington, CA").properties.push({
-                                parcel: row["Assessor parcel number"],
-                                developer: row.Developer,
-                                acres: row.Acres,
-                                sqft: row["Building sq.ft."]
+                        }
+                    }
+                    
+                    // Process Leasee
+                    if (row.Leasee && row.Leasee !== "TBD" && row.Leasee !== "Purchase" && 
+                        row.Leasee.trim() !== "") {
+                        const leasee = row.Leasee.trim();
+                        const leaseeOrigin = row.LeaseeOriginCity || "Unknown";
+                        
+                        if (!nodes.has(leasee)) {
+                            nodes.set(leasee, {
+                                name: leasee,
+                                type: "leasee",
+                                coords: getCoordinates(leaseeOrigin, leasee),
+                                origin: leaseeOrigin,
+                                connections: 0
                             });
                         }
                         
-                        // Process Purchaser
-                        if (row["Purchaser/Merger"] && row["Purchaser/Merger"] !== "TBD" && 
-                            row["Purchaser/Merger"] !== " TX\"" && row["Purchaser/Merger"] !== "Purchase" &&
-                            row["Purchaser/Merger"].trim() !== "") {
-                            const purchaser = row["Purchaser/Merger"].trim();
-                            const purchOrigin = row.PurchaserOriginCity || "Unknown";
-                            
-                            if (!nodes.has(purchaser)) {
-                                nodes.set(purchaser, {
-                                    name: purchaser,
-                                    type: "purchaser",
-                                    coords: getCoordinates(purchOrigin, purchaser),
-                                    origin: purchOrigin,
-                                    connections: 0
-                                });
-                            }
-                            
-                            if (!nodes.has(purchOrigin) && purchOrigin !== "Unknown" && purchOrigin !== "TBD") {
-                                nodes.set(purchOrigin, {
-                                    name: purchOrigin,
-                                    type: "city",
-                                    coords: cityCoords[purchOrigin] || getCoordinates(purchOrigin, purchOrigin),
-                                    connections: 0
-                                });
-                            }
-                            
-                            if (purchOrigin !== "Unknown" && purchOrigin !== "TBD") {
-                                edges.push({
-                                    from: purchOrigin,
-                                    to: purchaser,
-                                    type: "headquartered",
-                                    category: "purchaser"
-                                });
-                            }
-                            
-                            if (row.Developer && row.Developer !== "TBD") {
-                                edges.push({
-                                    from: row.Developer,
-                                    to: purchaser,
-                                    type: row["Transaction Type"] || "purchase",
-                                    property: row["Assessor parcel number"]
-                                });
-                            }
+                        if (!nodes.has(leaseeOrigin) && leaseeOrigin !== "Unknown" && leaseeOrigin !== "TBD") {
+                            nodes.set(leaseeOrigin, {
+                                name: leaseeOrigin,
+                                type: "city",
+                                coords: cityCoords[leaseeOrigin] || getCoordinates(leaseeOrigin, leaseeOrigin),
+                                connections: 0
+                            });
                         }
                         
-                        // Process Leasee
-                        if (row.Leasee && row.Leasee !== "TBD" && row.Leasee !== "Purchase" && 
-                            row.Leasee.trim() !== "") {
-                            const leasee = row.Leasee.trim();
-                            const leaseeOrigin = row.LeaseeOriginCity || "Unknown";
-                            
-                            if (!nodes.has(leasee)) {
-                                nodes.set(leasee, {
-                                    name: leasee,
-                                    type: "leasee",
-                                    coords: getCoordinates(leaseeOrigin, leasee),
-                                    origin: leaseeOrigin,
-                                    connections: 0
-                                });
-                            }
-                            
-                            if (!nodes.has(leaseeOrigin) && leaseeOrigin !== "Unknown" && leaseeOrigin !== "TBD") {
-                                nodes.set(leaseeOrigin, {
-                                    name: leaseeOrigin,
-                                    type: "city",
-                                    coords: cityCoords[leaseeOrigin] || getCoordinates(leaseeOrigin, leaseeOrigin),
-                                    connections: 0
-                                });
-                            }
-                            
-                            if (leaseeOrigin !== "Unknown" && leaseeOrigin !== "TBD") {
-                                edges.push({
-                                    from: leaseeOrigin,
-                                    to: leasee,
-                                    type: "headquartered",
-                                    category: "leasee"
-                                });
-                            }
-                            
-                            const lessor = row["Purchaser/Merger"] !== "TBD" ? row["Purchaser/Merger"] : row.Developer;
-                            if (lessor && lessor !== "TBD" && lessor.trim() !== "") {
-                                edges.push({
-                                    from: lessor.trim(),
-                                    to: leasee,
-                                    type: "leases to",
-                                    property: row["Assessor parcel number"]
-                                });
-                            }
+                        if (leaseeOrigin !== "Unknown" && leaseeOrigin !== "TBD") {
+                            edges.push({
+                                from: leaseeOrigin,
+                                to: leasee,
+                                type: "headquartered",
+                                category: "leasee"
+                            });
                         }
-                    });
+                        
+                        const lessor = row["Purchaser/Merger"] !== "TBD" ? row["Purchaser/Merger"] : row.Developer;
+                        if (lessor && lessor !== "TBD" && lessor.trim() !== "") {
+                            edges.push({
+                                from: lessor.trim(),
+                                to: leasee,
+                                type: "leases to",
+                                property: row["Assessor parcel number"]
+                            });
+                        }
+                    }
+                });
 
-                    // Count connections
-                    edges.forEach(edge => {
-                        if (nodes.has(edge.from)) nodes.get(edge.from).connections++;
-                        if (nodes.has(edge.to)) nodes.get(edge.to).connections++;
-                    });
+                // Count connections
+                edges.forEach(edge => {
+                    if (nodes.has(edge.from)) nodes.get(edge.from).connections++;
+                    if (nodes.has(edge.to)) nodes.get(edge.to).connections++;
+                });
 
-                    return { nodes, edges };
-                } catch (error) {
-                    console.error("Error loading data:", error);
-                    document.getElementById("loadingDiv").style.display = "none";
-                    document.getElementById("errorDiv").style.display = "block";
-                    throw error;
-                }
+                return { nodes, edges };
+            } catch (error) {
+                console.error("Error loading data:", error);
+                document.getElementById("loadingDiv").style.display = "none";
+                document.getElementById("errorDiv").style.display = "block";
+                throw error;
             }
+        }
 
-            // Create graphics
-            async function createNetwork() {
-                try {
-                    const { nodes, edges } = await loadData();
+        // Initialize map and create network
+        async function initializeMap() {
+            try {
+                // Initialize map
+                const map = new Map({
+                    basemap: "gray-vector"
+                });
+
+                const view = new MapView({
+                    container: "viewDiv",
+                    map: map,
+                    center: [-117.4, 34.0], // Bloomington, CA area
+                    zoom: 9
+                });
+
+                // Create graphics layers
+                const edgeLayer = new GraphicsLayer({ title: "Connections" });
+                const nodeLayer = new GraphicsLayer({ title: "Entities" });
+                const labelLayer = new GraphicsLayer({ title: "Labels" });
+                
+                map.addMany([edgeLayer, nodeLayer, labelLayer]);
+
+                // Wait for view to be ready
+                await view.when();
+
+                // Load and process data
+                const { nodes, edges } = await loadData();
+                
+                // Create edge graphics
+                edges.forEach(edge => {
+                    const fromNode = nodes.get(edge.from);
+                    const toNode = nodes.get(edge.to);
                     
-                    // Create edge graphics
-                    edges.forEach(edge => {
-                        const fromNode = nodes.get(edge.from);
-                        const toNode = nodes.get(edge.to);
-                        
-                        if (fromNode && toNode) {
-                            const polyline = new Polyline({
-                                paths: [[fromNode.coords, toNode.coords]],
-                                spatialReference: { wkid: 4326 }
-                            });
-                            
-                            let color, width;
-                            switch(edge.type) {
-                                case "develops":
-                                    color = [46, 134, 193, 0.8];
-                                    width = 3;
-                                    break;
-                                case "purchase":
-                                case "merger":
-                                    color = [231, 76, 60, 0.8];
-                                    width = 3;
-                                    break;
-                                case "leases to":
-                                    color = [243, 156, 18, 0.8];
-                                    width = 2;
-                                    break;
-                                case "headquartered":
-                                    color = [39, 174, 96, 0.8];
-                                    width = 1;
-                                    break;
-                                default:
-                                    color = [149, 165, 166, 0.8];
-                                    width = 1;
-                            }
-                            
-                            const lineSymbol = new SimpleLineSymbol({
-                                color: color,
-                                width: width,
-                                style: edge.type === "headquartered" ? "dash" : "solid"
-                            });
-                            
-                            const graphic = new Graphic({
-                                geometry: polyline,
-                                symbol: lineSymbol,
-                                attributes: edge
-                            });
-                            
-                            edgeLayer.add(graphic);
-                        }
-                    });
-                    
-                    // Create node graphics
-                    nodes.forEach((node, name) => {
-                        const point = new Point({
-                            longitude: node.coords[0],
-                            latitude: node.coords[1],
+                    if (fromNode && toNode) {
+                        const polyline = new Polyline({
+                            paths: [[fromNode.coords, toNode.coords]],
                             spatialReference: { wkid: 4326 }
                         });
                         
-                        let color, size;
-                        switch(node.type) {
-                            case "city":
-                                color = name === "Bloomington, CA" ? [231, 76, 60] : [52, 152, 219];
-                                size = name === "Bloomington, CA" ? 20 : 8;
+                        let color, width;
+                        switch(edge.type) {
+                            case "develops":
+                                color = [46, 134, 193, 0.8];
+                                width = 3;
                                 break;
-                            case "developer":
-                                color = [46, 134, 193];
-                                size = 12 + Math.min(node.connections * 2, 10);
+                            case "purchase":
+                            case "merger":
+                                color = [231, 76, 60, 0.8];
+                                width = 3;
                                 break;
-                            case "purchaser":
-                                color = [231, 76, 60];
-                                size = 12 + Math.min(node.connections * 2, 10);
+                            case "leases to":
+                                color = [243, 156, 18, 0.8];
+                                width = 2;
                                 break;
-                            case "leasee":
-                                color = [243, 156, 18];
-                                size = 10 + Math.min(node.connections * 2, 8);
+                            case "headquartered":
+                                color = [39, 174, 96, 0.8];
+                                width = 1;
                                 break;
                             default:
-                                color = [149, 165, 166];
-                                size = 8;
+                                color = [149, 165, 166, 0.8];
+                                width = 1;
                         }
                         
-                        const markerSymbol = new SimpleMarkerSymbol({
+                        const lineSymbol = new SimpleLineSymbol({
                             color: color,
-                            size: size,
-                            outline: {
-                                color: [255, 255, 255],
-                                width: 2
-                            }
+                            width: width,
+                            style: edge.type === "headquartered" ? "dash" : "solid"
                         });
                         
                         const graphic = new Graphic({
-                            geometry: point,
-                            symbol: markerSymbol,
-                            attributes: node
+                            geometry: polyline,
+                            symbol: lineSymbol,
+                            attributes: edge
                         });
                         
-                        nodeLayer.add(graphic);
-                        
-                        // Add labels for major nodes
-                        if (node.type === "city" || node.connections > 2 || name === "Bloomington, CA") {
-                            const textSymbol = new TextSymbol({
-                                text: name,
-                                color: [0, 0, 0],
-                                haloColor: [255, 255, 255],
-                                haloSize: 2,
-                                font: {
-                                    size: name === "Bloomington, CA" ? 14 : 10,
-                                    weight: name === "Bloomington, CA" ? "bold" : "normal"
-                                },
-                                yoffset: -15
-                            });
-                            
-                            const labelGraphic = new Graphic({
-                                geometry: point,
-                                symbol: textSymbol
-                            });
-                            
-                            labelLayer.add(labelGraphic);
+                        edgeLayer.add(graphic);
+                    }
+                });
+                
+                // Create node graphics
+                nodes.forEach((node, name) => {
+                    const point = new Point({
+                        longitude: node.coords[0],
+                        latitude: node.coords[1],
+                        spatialReference: { wkid: 4326 }
+                    });
+                    
+                    let color, size;
+                    switch(node.type) {
+                        case "city":
+                            color = name === "Bloomington, CA" ? [231, 76, 60] : [52, 152, 219];
+                            size = name === "Bloomington, CA" ? 20 : 8;
+                            break;
+                        case "developer":
+                            color = [46, 134, 193];
+                            size = 12 + Math.min(node.connections * 2, 10);
+                            break;
+                        case "purchaser":
+                            color = [231, 76, 60];
+                            size = 12 + Math.min(node.connections * 2, 10);
+                            break;
+                        case "leasee":
+                            color = [243, 156, 18];
+                            size = 10 + Math.min(node.connections * 2, 8);
+                            break;
+                        default:
+                            color = [149, 165, 166];
+                            size = 8;
+                    }
+                    
+                    const markerSymbol = new SimpleMarkerSymbol({
+                        color: color,
+                        size: size,
+                        outline: {
+                            color: [255, 255, 255],
+                            width: 2
                         }
                     });
                     
-                    // Hide loading and show info panel
-                    document.getElementById("loadingDiv").style.display = "none";
-                    document.getElementById("infoPanel").style.display = "block";
+                    const graphic = new Graphic({
+                        geometry: point,
+                        symbol: markerSymbol,
+                        attributes: node
+                    });
                     
-                    // Update extent to show all graphics
-                    view.goTo(nodeLayer.graphics.concat(edgeLayer.graphics));
-                } catch (error) {
-                    console.error("Failed to create network:", error);
-                }
-            }
-            
-            // Handle click events
-            view.on("click", function(event) {
-                view.hitTest(event).then(function(response) {
-                    const graphic = response.results[0]?.graphic;
-                    if (graphic && graphic.attributes) {
-                        const attrs = graphic.attributes;
-                        let infoHtml = "";
+                    nodeLayer.add(graphic);
+                    
+                    // Add labels for major nodes
+                    if (node.type === "city" || node.connections > 2 || name === "Bloomington, CA") {
+                        const textSymbol = new TextSymbol({
+                            text: name,
+                            color: [0, 0, 0],
+                            haloColor: [255, 255, 255],
+                            haloSize: 2,
+                            font: {
+                                size: name === "Bloomington, CA" ? 14 : 10,
+                                weight: name === "Bloomington, CA" ? "bold" : "normal"
+                            },
+                            yoffset: -15
+                        });
                         
-                        if (attrs.name) {
-                            // Node clicked
-                            infoHtml = `<h4>${attrs.name}</h4>`;
-                            infoHtml += `<p><strong>Type:</strong> ${attrs.type}</p>`;
-                            if (attrs.origin) {
-                                infoHtml += `<p><strong>Origin:</strong> ${attrs.origin}</p>`;
-                            }
-                            if (attrs.connections) {
-                                infoHtml += `<p><strong>Connections:</strong> ${attrs.connections}</p>`;
-                            }
-                            if (attrs.properties && attrs.properties.length > 0) {
-                                infoHtml += `<p><strong>Properties:</strong> ${attrs.properties.length}</p>`;
-                            }
-                        } else if (attrs.type) {
-                            // Edge clicked
-                            infoHtml = `<h4>Connection Details</h4>`;
-                            infoHtml += `<p><strong>From:</strong> ${attrs.from}</p>`;
-                            infoHtml += `<p><strong>To:</strong> ${attrs.to}</p>`;
-                            infoHtml += `<p><strong>Type:</strong> ${attrs.type}</p>`;
-                            if (attrs.property) {
-                                infoHtml += `<p><strong>Property:</strong> ${attrs.property}</p>`;
-                            }
-                            if (attrs.acres) {
-                                infoHtml += `<p><strong>Acres:</strong> ${attrs.acres}</p>`;
-                            }
-                            if (attrs.sqft) {
-                                infoHtml += `<p><strong>Sq.Ft.:</strong> ${attrs.sqft.toLocaleString()}</p>`;
-                            }
-                        }
+                        const labelGraphic = new Graphic({
+                            geometry: point,
+                            symbol: textSymbol
+                        });
                         
-                        document.getElementById("nodeInfo").innerHTML = infoHtml || "<p>Click on nodes or edges for details</p>";
+                        labelLayer.add(labelGraphic);
                     }
                 });
-            });
-            
-            // Initialize the network when view is ready
-            view.when(function() {
-                createNetwork();
-            });
-        });
+                
+                // Hide loading and show info panel
+                document.getElementById("loadingDiv").style.display = "none";
+                document.getElementById("infoPanel").style.display = "block";
+                
+                // Update extent to show all graphics
+                if (nodeLayer.graphics.length > 0) {
+                    view.goTo(nodeLayer.graphics.concat(edgeLayer.graphics));
+                }
+                
+                // Handle click events
+                view.on("click", function(event) {
+                    view.hitTest(event).then(function(response) {
+                        const graphic = response.results[0]?.graphic;
+                        if (graphic && graphic.attributes) {
+                            const attrs = graphic.attributes;
+                            let infoHtml = "";
+                            
+                            if (attrs.name) {
+                                // Node clicked
+                                infoHtml = `<h4>${attrs.name}</h4>`;
+                                infoHtml += `<p><strong>Type:</strong> ${attrs.type}</p>`;
+                                if (attrs.origin) {
+                                    infoHtml += `<p><strong>Origin:</strong> ${attrs.origin}</p>`;
+                                }
+                                if (attrs.connections) {
+                                    infoHtml += `<p><strong>Connections:</strong> ${attrs.connections}</p>`;
+                                }
+                                if (attrs.properties && attrs.properties.length > 0) {
+                                    infoHtml += `<p><strong>Properties:</strong> ${attrs.properties.length}</p>`;
+                                }
+                            } else if (attrs.type) {
+                                // Edge clicked
+                                infoHtml = `<h4>Connection Details</h4>`;
+                                infoHtml += `<p><strong>From:</strong> ${attrs.from}</p>`;
+                                infoHtml += `<p><strong>To:</strong> ${attrs.to}</p>`;
+                                infoHtml += `<p><strong>Type:</strong> ${attrs.type}</p>`;
+                                if (attrs.property) {
+                                    infoHtml += `<p><strong>Property:</strong> ${attrs.property}</p>`;
+                                }
+                                if (attrs.acres) {
+                                    infoHtml += `<p><strong>Acres:</strong> ${attrs.acres}</p>`;
+                                }
+                                if (attrs.sqft) {
+                                    infoHtml += `<p><strong>Sq.Ft.:</strong> ${attrs.sqft.toLocaleString()}</p>`;
+                                }
+                            }
+                            
+                            document.getElementById("nodeInfo").innerHTML = infoHtml || "<p>Click on nodes or edges for details</p>";
+                        }
+                    });
+                });
+                
+            } catch (error) {
+                console.error("Failed to initialize map:", error);
+                document.getElementById("loadingDiv").style.display = "none";
+                document.getElementById("errorDiv").style.display = "block";
+            }
+        }
+
+        // Start the application
+        initializeMap();
     </script>
 </body>
 </html>
