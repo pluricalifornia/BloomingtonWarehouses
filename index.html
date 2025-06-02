@@ -90,16 +90,8 @@
         <p>Processing warehouse ownership data</p>
     </div>
     <div id="errorDiv">
-        <h3>Configuration Required</h3>
-        <p>Please update the CSV_URL in the code to point to your CSV file on GitHub.</p>
-        <div class="config-note">
-            <p><strong>How to set up:</strong></p>
-            <ol style="text-align: left;">
-                <li>Upload your CSV to GitHub</li>
-                <li>Get the raw file URL (click "Raw" button)</li>
-                <li>Replace CSV_URL in the code with your URL</li>
-            </ol>
-        </div>
+        <h3>Error Loading Data</h3>
+        <p id="errorMessage"></p>
     </div>
     <div id="infoPanel" style="display: none;">
         <h3>Warehouse Ownership Network</h3>
@@ -139,9 +131,18 @@
     </div>
 
     <script type="module">
-        // CONFIGURATION: Replace this with your GitHub raw CSV URL
-        const CSV_URL = 'https://raw.githubusercontent.com/pluricalifornia/BloomingtonWarehouses/refs/heads/main/data/WarehouseTracker.csv';
-        // Example: 'https://raw.githubusercontent.com/username/warehouse-data/main/data/WarehouseTracker.csv'
+        // GitHub content URLs for CSV files
+        const githubBaseUrl = "https://raw.githubusercontent.com/pluricalifornia/BloomingtonWarehouses/main/";
+        
+        // Flag to control using static data vs GitHub data
+        let useStaticData = false; // Set to false to attempt GitHub loading
+        
+        // Static CSV data embedded in the HTML as a fallback
+        const csvData = `"Category","Assessor parcel number","Building classification","Year built/approved","Acres","Building sq.ft.",Developer,DevOriginCity,Purchaser/Merger,Category,Leasee,PurchaserOriginCity,LeaseeOriginCity,Endpoint
+"Approved","Bloomington Business Park","https://ceqanet.opr.ca.gov/2020120545/3","2025","181","4340000",Howard Industrial Partners LLC,"Lemon Heights, CA",TBD,TBD,TBD,TBD,TBD,"Bloomington, CA"
+"Existing","025217367","transit warehouse (truck terminal)","2001","47","1133000",Pacific Industrial,"Newport Beach, CA",Realterm,Purchase,YellowCorp,"Annapolis, MD",TBD,"Bloomington, CA"
+"Existing","Bloomington Logistics Center","distribution warehouse","2019","35","827000", Crow holdings Industrial, "Highland Park, TX", ASB Real Estate Investments,Purchase,TBD,"Bethseda, MD",TBD,"Bloomington, CA"
+"Existing","025215217","distribution warehouse","2018","28","674000", DCT Industrial Trust,"Evergreen, CO",Prologis,Merger,TBD,"Pacific Heights, CA",TBD,"Bloomington, CA"`;
         
         // Import ArcGIS modules
         import Map from "https://js.arcgis.com/4.27/@arcgis/core/Map.js";
@@ -153,8 +154,12 @@
         import SimpleMarkerSymbol from "https://js.arcgis.com/4.27/@arcgis/core/symbols/SimpleMarkerSymbol.js";
         import SimpleLineSymbol from "https://js.arcgis.com/4.27/@arcgis/core/symbols/SimpleLineSymbol.js";
         import TextSymbol from "https://js.arcgis.com/4.27/@arcgis/core/symbols/TextSymbol.js";
+        import * as locator from "https://js.arcgis.com/4.27/@arcgis/core/rest/locator.js";
 
-        // City coordinates (approximate)
+        // Cache for geocoded locations
+        const geocodeCache = {};
+        
+        // Predefined coordinates for known cities (fallback)
         const cityCoords = {
             "Bloomington, CA": [-117.396, 34.070],
             "Lemon Heights, CA": [-117.823, 33.765],
@@ -162,7 +167,7 @@
             "Annapolis, MD": [-76.492, 38.978],
             "Highland Park, TX": [-96.792, 32.834],
             "Bethesda, MD": [-77.094, 38.984],
-            "Bethseda, MD": [-77.094, 38.984], // Handle typo in data
+            "Bethseda, MD": [-77.094, 38.984], // Handle typo
             "Evergreen, CO": [-105.321, 39.633],
             "Pacific Heights, CA": [-122.447, 37.794],
             "San Francisco, CA": [-122.419, 37.774],
@@ -179,44 +184,82 @@
             "Washington, DC": [-77.036, 38.895]
         };
 
+        // Geocoding function using ArcGIS locator
+        async function geocodeLocation(address) {
+            // Check cache first
+            if (geocodeCache[address]) {
+                return geocodeCache[address];
+            }
+            
+            // Check predefined coordinates
+            if (cityCoords[address]) {
+                geocodeCache[address] = cityCoords[address];
+                return cityCoords[address];
+            }
+            
+            try {
+                // Use ArcGIS geocoding service
+                const geocodeUrl = "https://geocode-api.arcgis.com/arcgis/rest/services/World/GeocodeServer";
+                const result = await locator.addressToLocations(geocodeUrl, {
+                    address: {
+                        SingleLine: address
+                    },
+                    maxLocations: 1
+                });
+                
+                if (result && result.length > 0) {
+                    const coords = [result[0].location.longitude, result[0].location.latitude];
+                    geocodeCache[address] = coords;
+                    return coords;
+                }
+            } catch (error) {
+                console.warn(`Geocoding failed for ${address}:`, error);
+            }
+            
+            // Fallback to default location with offset
+            const defaultCoords = [-117.4 + (Math.random() - 0.5) * 2, 34.0 + (Math.random() - 0.5) * 2];
+            geocodeCache[address] = defaultCoords;
+            return defaultCoords;
+        }
+
         // Function to get coordinates with offset for multiple entities
         const entityOffsets = {};
-        function getCoordinates(location, entityName) {
-            let coords = cityCoords[location];
-            if (!coords) {
-                // Default coordinates with random offset
-                coords = [-117.4 + (Math.random() - 0.5) * 2, 34.0 + (Math.random() - 0.5) * 2];
-            }
+        async function getCoordinatesForEntity(location, entityName) {
+            const baseCoords = await geocodeLocation(location);
             
             // Add offset for multiple entities in same location
             const key = location + "|" + entityName;
             if (!entityOffsets[key]) {
                 const count = Object.keys(entityOffsets).filter(k => k.startsWith(location)).length;
                 const angle = (count * 72) * Math.PI / 180;
-                const offset = 0.1;
+                const offset = 0.05; // Smaller offset for cleaner appearance
                 entityOffsets[key] = [
-                    coords[0] + offset * Math.cos(angle),
-                    coords[1] + offset * Math.sin(angle)
+                    baseCoords[0] + offset * Math.cos(angle),
+                    baseCoords[1] + offset * Math.sin(angle)
                 ];
             }
             return entityOffsets[key];
         }
 
-        // Parse CSV data from GitHub
+        // Load and parse CSV data
         async function loadData() {
             try {
-                // Check if URL is configured
-                if (CSV_URL.includes('YOUR_USERNAME')) {
-                    throw new Error('Please configure the CSV_URL with your GitHub repository URL');
-                }
+                let csvText = csvData;
                 
-                // Fetch CSV from GitHub
-                const response = await fetch(CSV_URL);
-                if (!response.ok) {
-                    throw new Error(`Failed to fetch CSV: ${response.status}`);
+                // Try to load from GitHub if not using static data
+                if (!useStaticData) {
+                    try {
+                        const response = await fetch(githubBaseUrl + "data/WarehouseTracker.csv");
+                        if (response.ok) {
+                            csvText = await response.text();
+                            console.log("Successfully loaded CSV from GitHub");
+                        } else {
+                            console.warn("Failed to load from GitHub, using embedded data");
+                        }
+                    } catch (error) {
+                        console.warn("Failed to fetch from GitHub, using embedded data:", error);
+                    }
                 }
-                
-                const csvText = await response.text();
                 
                 // Fix header issue
                 const lines = csvText.split('\n');
@@ -234,35 +277,39 @@
                 const edges = [];
 
                 // Add Bloomington as central node
+                const bloomingtonCoords = await geocodeLocation("Bloomington, CA");
                 nodes.set("Bloomington, CA", {
                     name: "Bloomington, CA",
                     type: "city",
-                    coords: cityCoords["Bloomington, CA"],
+                    coords: bloomingtonCoords,
                     connections: 0,
                     properties: []
                 });
 
-                // Process each row
-                parsed.data.forEach(row => {
+                // Process each row with geocoding
+                for (const row of parsed.data) {
                     // Process Developer
                     if (row.Developer && row.Developer !== "TBD" && row.Developer.trim() !== "") {
+                        const developer = row.Developer.trim();
                         const devOrigin = row.DevOriginCity || "Unknown";
                         
-                        if (!nodes.has(row.Developer)) {
-                            nodes.set(row.Developer, {
-                                name: row.Developer,
+                        if (!nodes.has(developer)) {
+                            const coords = await getCoordinatesForEntity(devOrigin, developer);
+                            nodes.set(developer, {
+                                name: developer,
                                 type: "developer",
-                                coords: getCoordinates(devOrigin, row.Developer),
+                                coords: coords,
                                 origin: devOrigin,
                                 connections: 0
                             });
                         }
                         
                         if (!nodes.has(devOrigin) && devOrigin !== "Unknown" && devOrigin !== "TBD") {
+                            const coords = await geocodeLocation(devOrigin);
                             nodes.set(devOrigin, {
                                 name: devOrigin,
                                 type: "city",
-                                coords: cityCoords[devOrigin] || getCoordinates(devOrigin, devOrigin),
+                                coords: coords,
                                 connections: 0
                             });
                         }
@@ -271,14 +318,14 @@
                         if (devOrigin !== "Unknown" && devOrigin !== "TBD") {
                             edges.push({
                                 from: devOrigin,
-                                to: row.Developer,
+                                to: developer,
                                 type: "headquartered",
                                 category: "developer"
                             });
                         }
                         
                         edges.push({
-                            from: row.Developer,
+                            from: developer,
                             to: "Bloomington, CA",
                             type: "develops",
                             property: row["Assessor parcel number"],
@@ -288,7 +335,7 @@
                         
                         nodes.get("Bloomington, CA").properties.push({
                             parcel: row["Assessor parcel number"],
-                            developer: row.Developer,
+                            developer: developer,
                             acres: row.Acres,
                             sqft: row["Building sq.ft."]
                         });
@@ -302,20 +349,22 @@
                         const purchOrigin = row.PurchaserOriginCity || "Unknown";
                         
                         if (!nodes.has(purchaser)) {
+                            const coords = await getCoordinatesForEntity(purchOrigin, purchaser);
                             nodes.set(purchaser, {
                                 name: purchaser,
                                 type: "purchaser",
-                                coords: getCoordinates(purchOrigin, purchaser),
+                                coords: coords,
                                 origin: purchOrigin,
                                 connections: 0
                             });
                         }
                         
                         if (!nodes.has(purchOrigin) && purchOrigin !== "Unknown" && purchOrigin !== "TBD") {
+                            const coords = await geocodeLocation(purchOrigin);
                             nodes.set(purchOrigin, {
                                 name: purchOrigin,
                                 type: "city",
-                                coords: cityCoords[purchOrigin] || getCoordinates(purchOrigin, purchOrigin),
+                                coords: coords,
                                 connections: 0
                             });
                         }
@@ -331,7 +380,7 @@
                         
                         if (row.Developer && row.Developer !== "TBD") {
                             edges.push({
-                                from: row.Developer,
+                                from: row.Developer.trim(),
                                 to: purchaser,
                                 type: row["Transaction Type"] || "purchase",
                                 property: row["Assessor parcel number"]
@@ -346,20 +395,22 @@
                         const leaseeOrigin = row.LeaseeOriginCity || "Unknown";
                         
                         if (!nodes.has(leasee)) {
+                            const coords = await getCoordinatesForEntity(leaseeOrigin, leasee);
                             nodes.set(leasee, {
                                 name: leasee,
                                 type: "leasee",
-                                coords: getCoordinates(leaseeOrigin, leasee),
+                                coords: coords,
                                 origin: leaseeOrigin,
                                 connections: 0
                             });
                         }
                         
                         if (!nodes.has(leaseeOrigin) && leaseeOrigin !== "Unknown" && leaseeOrigin !== "TBD") {
+                            const coords = await geocodeLocation(leaseeOrigin);
                             nodes.set(leaseeOrigin, {
                                 name: leaseeOrigin,
                                 type: "city",
-                                coords: cityCoords[leaseeOrigin] || getCoordinates(leaseeOrigin, leaseeOrigin),
+                                coords: coords,
                                 connections: 0
                             });
                         }
@@ -383,7 +434,7 @@
                             });
                         }
                     }
-                });
+                }
 
                 // Count connections
                 edges.forEach(edge => {
@@ -394,8 +445,6 @@
                 return { nodes, edges };
             } catch (error) {
                 console.error("Error loading data:", error);
-                document.getElementById("loadingDiv").style.display = "none";
-                document.getElementById("errorDiv").style.display = "block";
                 throw error;
             }
         }
@@ -606,6 +655,7 @@
                 console.error("Failed to initialize map:", error);
                 document.getElementById("loadingDiv").style.display = "none";
                 document.getElementById("errorDiv").style.display = "block";
+                document.getElementById("errorMessage").textContent = error.message;
             }
         }
 
