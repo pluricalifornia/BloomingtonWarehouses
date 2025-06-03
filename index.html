@@ -63,14 +63,23 @@
             font-size: 13px;
         }
         
-        .relationship-list {
-            margin: 5px 0;
-            padding-left: 20px;
+        .mind-map-branch {
+            margin: 10px 0;
+            padding: 10px;
+            background: #f9f9f9;
+            border-left: 4px solid #3498db;
+            border-radius: 4px;
         }
         
-        .relationship-item {
-            margin: 3px 0;
+        .branch-title {
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        
+        .branch-details {
             font-size: 12px;
+            color: #555;
+            margin: 5px 0;
         }
         
         #loadingDiv {
@@ -112,6 +121,27 @@
             padding-top: 10px;
             border-top: 1px solid #ddd;
         }
+        
+        .tree-structure {
+            margin-left: 15px;
+            border-left: 2px solid #ddd;
+            padding-left: 10px;
+        }
+        
+        .tree-node {
+            margin: 5px 0;
+            position: relative;
+        }
+        
+        .tree-node::before {
+            content: "";
+            position: absolute;
+            left: -12px;
+            top: 10px;
+            width: 10px;
+            height: 1px;
+            background: #ddd;
+        }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
     <script src="https://js.arcgis.com/4.27/"></script>
@@ -137,6 +167,10 @@
         <div class="legend">
             <h4>Entity Types</h4>
             <div class="legend-item">
+                <div class="legend-circle" style="background: #34495e;"></div>
+                <span>Central Hub (Bloomington)</span>
+            </div>
+            <div class="legend-item">
                 <div class="legend-circle" style="background: #8B4513;"></div>
                 <span>Warehouse Property</span>
             </div>
@@ -161,6 +195,10 @@
         <div class="warehouse-node-legend">
             <h4>Connection Types</h4>
             <div class="legend-item">
+                <div class="legend-line" style="background: #8B4513; width: 4px;"></div>
+                <span>Contains Warehouse</span>
+            </div>
+            <div class="legend-item">
                 <div class="legend-line" style="background: #2E86C1; width: 4px;"></div>
                 <span>Developed by</span>
             </div>
@@ -179,7 +217,7 @@
         </div>
         
         <div class="node-info" id="nodeInfo">
-            <p>Click on warehouses, entities, or connections for details</p>
+            <p>Click on nodes for details</p>
         </div>
     </div>
 
@@ -369,6 +407,178 @@
                 ];
             }
 
+            // Build mind map data structure
+            function buildMindMapData(parsedData) {
+                const mindMapData = {
+                    name: "Bloomington, CA",
+                    color: "#34495e",
+                    details: "Central hub for warehouse development in San Bernardino County",
+                    type: "root",
+                    children: []
+                };
+
+                parsedData.forEach((row, index) => {
+                    const warehouseId = row["Assessor parcel number"] || `Warehouse_${index}`;
+                    const developer = cleanEntityName(row.Developer);
+                    const purchaser = cleanEntityName(row["Purchaser/Merger"]);
+                    const leasee = cleanEntityName(row.Leasee);
+                    
+                    const warehouseNode = {
+                        name: warehouseId,
+                        color: "#8B4513",
+                        details: `${row["Building classification"] || "Warehouse"} - ${row.Acres || 0} acres, ${(row["Building sq.ft."] || 0).toLocaleString()} sq.ft.`,
+                        type: "warehouse",
+                        data: row,
+                        children: []
+                    };
+
+                    // Add developer branch
+                    if (developer) {
+                        const devOrigin = cleanLocation(row.DevOriginCity);
+                        warehouseNode.children.push({
+                            name: "Developer",
+                            color: "#2E86C1",
+                            details: developer,
+                            type: "relationship",
+                            children: [
+                                {
+                                    name: developer,
+                                    color: "#2E86C1",
+                                    details: `Headquarters: ${devOrigin || "Unknown"}`,
+                                    type: "entity",
+                                    subtype: "developer",
+                                    origin: devOrigin
+                                }
+                            ]
+                        });
+                    }
+
+                    // Add purchaser branch
+                    if (purchaser) {
+                        const purchOrigin = cleanLocation(row.PurchaserOriginCity);
+                        warehouseNode.children.push({
+                            name: "Purchaser/Owner",
+                            color: "#E74C3C",
+                            details: `${row["Transaction Type"] || "Purchase"}: ${purchaser}`,
+                            type: "relationship",
+                            children: [
+                                {
+                                    name: purchaser,
+                                    color: "#E74C3C",
+                                    details: `Headquarters: ${purchOrigin || "Unknown"}`,
+                                    type: "entity",
+                                    subtype: "purchaser",
+                                    origin: purchOrigin
+                                }
+                            ]
+                        });
+                    }
+
+                    // Add leasee branch
+                    if (leasee) {
+                        const leaseeOrigin = cleanLocation(row.LeaseeOriginCity);
+                        warehouseNode.children.push({
+                            name: "Tenant",
+                            color: "#F39C12",
+                            details: `Leased to: ${leasee}`,
+                            type: "relationship",
+                            children: [
+                                {
+                                    name: leasee,
+                                    color: "#F39C12",
+                                    details: `Headquarters: ${leaseeOrigin || "Unknown"}`,
+                                    type: "entity",
+                                    subtype: "leasee",
+                                    origin: leaseeOrigin
+                                }
+                            ]
+                        });
+                    }
+
+                    mindMapData.children.push(warehouseNode);
+                });
+
+                return mindMapData;
+            }
+
+            // Convert mind map structure to nodes and edges for visualization
+            async function convertMindMapToNetwork(mindMapData) {
+                const nodes = {};
+                const edges = [];
+                const nodeQueue = [{node: mindMapData, parent: null, level: 0}];
+                
+                // Process mind map structure breadth-first
+                while (nodeQueue.length > 0) {
+                    const {node, parent, level} = nodeQueue.shift();
+                    let nodeId = node.name;
+                    
+                    // Create unique IDs for duplicate names
+                    if (nodes[nodeId]) {
+                        nodeId = `${node.name}_${Object.keys(nodes).filter(k => k.startsWith(node.name)).length}`;
+                    }
+                    
+                    // Get coordinates based on node type and level
+                    let coords;
+                    if (node.type === "root") {
+                        coords = await geocodeLocation(node.name);
+                    } else if (node.type === "warehouse") {
+                        const warehouseIndex = mindMapData.children.indexOf(node);
+                        coords = getWarehousePosition(warehouseIndex, mindMapData.children.length);
+                    } else if (node.type === "entity" && node.origin) {
+                        coords = await getCoordinatesForEntity(node.origin, node.name);
+                    } else {
+                        // Position relationship nodes near their warehouse
+                        const parentCoords = parent ? nodes[parent].coords : [0, 0];
+                        const offset = 0.05 * (level - 1);
+                        const angle = Math.random() * 2 * Math.PI;
+                        coords = [
+                            parentCoords[0] + offset * Math.cos(angle),
+                            parentCoords[1] + offset * Math.sin(angle)
+                        ];
+                    }
+                    
+                    // Create node
+                    nodes[nodeId] = {
+                        id: nodeId,
+                        name: node.name,
+                        type: node.type,
+                        subtype: node.subtype,
+                        color: node.color,
+                        details: node.details,
+                        coords: coords,
+                        level: level,
+                        data: node.data,
+                        connections: 0
+                    };
+                    
+                    // Create edge from parent
+                    if (parent) {
+                        edges.push({
+                            from: parent,
+                            to: nodeId,
+                            type: node.type === "relationship" ? "contains" : node.subtype || "relationship",
+                            color: node.color,
+                            level: level
+                        });
+                    }
+                    
+                    // Process children
+                    if (node.children) {
+                        node.children.forEach(child => {
+                            nodeQueue.push({node: child, parent: nodeId, level: level + 1});
+                        });
+                    }
+                }
+                
+                // Count connections
+                edges.forEach(edge => {
+                    if (nodes[edge.from]) nodes[edge.from].connections++;
+                    if (nodes[edge.to]) nodes[edge.to].connections++;
+                });
+                
+                return {nodes, edges};
+            }
+
             // Load and parse CSV data
             async function loadData() {
                 try {
@@ -401,236 +611,25 @@
                         skipEmptyLines: true
                     });
 
-                    // Initialize collections using plain objects
-                    const nodes = {};
-                    const edges = [];
-                    const warehouses = [];
+                    // Build mind map structure
+                    const mindMapData = buildMindMapData(parsed.data);
                     
-                    // Add Bloomington as central node first
-                    const bloomingtonCoords = await geocodeLocation("Bloomington, CA");
-                    nodes["Bloomington, CA"] = {
-                        name: "Bloomington, CA",
-                        type: "city",
-                        subtype: "central",
-                        coords: bloomingtonCoords,
-                        connections: 0,
-                        warehouses: []
-                    };
-
-                    // Process each warehouse (row) as a mind map branch
-                    let warehouseIndex = 0;
-                    for (const row of parsed.data) {
-                        const warehouseId = row["Assessor parcel number"] || `Warehouse_${warehouseIndex}`;
-                        const warehouseCoords = getWarehousePosition(warehouseIndex, parsed.data.length);
-                        
-                        // Create warehouse node
-                        const warehouseNode = {
-                            id: warehouseId,
-                            name: row["Building classification"] || warehouseId,
-                            type: "warehouse",
-                            coords: warehouseCoords,
-                            category: row.Category,
-                            year: row["Year built/approved"],
-                            acres: row.Acres,
-                            sqft: row["Building sq.ft."],
-                            developer: null,
-                            purchaser: null,
-                            leasee: null,
-                            connections: 0
-                        };
-                        
-                        nodes[warehouseId] = warehouseNode;
-                        warehouses.push(warehouseNode);
-                        
-                        // Connect warehouse to Bloomington
-                        edges.push({
-                            from: "Bloomington, CA",
-                            to: warehouseId,
-                            type: "contains",
-                            category: "location"
-                        });
-                        
-                        // Process Developer
-                        const developerName = cleanEntityName(row.Developer);
-                        const devOrigin = cleanLocation(row.DevOriginCity);
-                        
-                        if (developerName) {
-                            warehouseNode.developer = developerName;
-                            
-                            if (!nodes[developerName]) {
-                                const coords = devOrigin ? 
-                                    await getCoordinatesForEntity(devOrigin, developerName) :
-                                    await getCoordinatesForEntity("California", developerName);
-                                nodes[developerName] = {
-                                    name: developerName,
-                                    type: "entity",
-                                    subtype: "developer",
-                                    coords: coords,
-                                    origin: devOrigin || "Unknown",
-                                    connections: 0,
-                                    warehouses: []
-                                };
-                            }
-                            
-                            nodes[developerName].warehouses.push(warehouseId);
-                            
-                            if (devOrigin && !nodes[devOrigin]) {
-                                const coords = await geocodeLocation(devOrigin);
-                                nodes[devOrigin] = {
-                                    name: devOrigin,
-                                    type: "city",
-                                    subtype: "headquarters",
-                                    coords: coords,
-                                    connections: 0
-                                };
-                            }
-                            
-                            // Add edges
-                            if (devOrigin) {
-                                edges.push({
-                                    from: devOrigin,
-                                    to: developerName,
-                                    type: "headquartered",
-                                    category: "developer"
-                                });
-                            }
-                            
-                            edges.push({
-                                from: developerName,
-                                to: warehouseId,
-                                type: "developed",
-                                category: "developer",
-                                year: row["Year built/approved"]
-                            });
-                        }
-                        
-                        // Process Purchaser
-                        const purchaserName = cleanEntityName(row["Purchaser/Merger"]);
-                        const purchOrigin = cleanLocation(row.PurchaserOriginCity);
-                        
-                        if (purchaserName) {
-                            warehouseNode.purchaser = purchaserName;
-                            
-                            if (!nodes[purchaserName]) {
-                                const coords = purchOrigin ? 
-                                    await getCoordinatesForEntity(purchOrigin, purchaserName) :
-                                    await getCoordinatesForEntity("California", purchaserName);
-                                nodes[purchaserName] = {
-                                    name: purchaserName,
-                                    type: "entity",
-                                    subtype: "purchaser",
-                                    coords: coords,
-                                    origin: purchOrigin || "Unknown",
-                                    connections: 0,
-                                    warehouses: []
-                                };
-                            }
-                            
-                            nodes[purchaserName].warehouses.push(warehouseId);
-                            
-                            if (purchOrigin && !nodes[purchOrigin]) {
-                                const coords = await geocodeLocation(purchOrigin);
-                                nodes[purchOrigin] = {
-                                    name: purchOrigin,
-                                    type: "city",
-                                    subtype: "headquarters",
-                                    coords: coords,
-                                    connections: 0
-                                };
-                            }
-                            
-                            if (purchOrigin) {
-                                edges.push({
-                                    from: purchOrigin,
-                                    to: purchaserName,
-                                    type: "headquartered",
-                                    category: "purchaser"
-                                });
-                            }
-                            
-                            edges.push({
-                                from: purchaserName,
-                                to: warehouseId,
-                                type: row["Transaction Type"] || "purchased",
-                                category: "purchaser"
-                            });
-                        }
-                        
-                        // Process Leasee
-                        const leaseeName = cleanEntityName(row.Leasee);
-                        const leaseeOrigin = cleanLocation(row.LeaseeOriginCity);
-                        
-                        if (leaseeName) {
-                            warehouseNode.leasee = leaseeName;
-                            
-                            if (!nodes[leaseeName]) {
-                                const coords = leaseeOrigin ? 
-                                    await getCoordinatesForEntity(leaseeOrigin, leaseeName) :
-                                    await getCoordinatesForEntity("California", leaseeName);
-                                nodes[leaseeName] = {
-                                    name: leaseeName,
-                                    type: "entity",
-                                    subtype: "leasee",
-                                    coords: coords,
-                                    origin: leaseeOrigin || "Unknown",
-                                    connections: 0,
-                                    warehouses: []
-                                };
-                            }
-                            
-                            nodes[leaseeName].warehouses.push(warehouseId);
-                            
-                            if (leaseeOrigin && !nodes[leaseeOrigin]) {
-                                const coords = await geocodeLocation(leaseeOrigin);
-                                nodes[leaseeOrigin] = {
-                                    name: leaseeOrigin,
-                                    type: "city",
-                                    subtype: "headquarters",
-                                    coords: coords,
-                                    connections: 0
-                                };
-                            }
-                            
-                            if (leaseeOrigin) {
-                                edges.push({
-                                    from: leaseeOrigin,
-                                    to: leaseeName,
-                                    type: "headquartered",
-                                    category: "leasee"
-                                });
-                            }
-                            
-                            edges.push({
-                                from: leaseeName,
-                                to: warehouseId,
-                                type: "leases",
-                                category: "leasee"
-                            });
-                        }
-                        
-                        warehouseIndex++;
-                    }
-
-                    // Count connections
-                    edges.forEach(edge => {
-                        const fromNode = nodes[edge.from];
-                        const toNode = nodes[edge.to];
-                        if (fromNode) fromNode.connections++;
-                        if (toNode) toNode.connections++;
-                    });
-
+                    // Convert to network visualization
+                    const {nodes, edges} = await convertMindMapToNetwork(mindMapData);
+                    
                     // Calculate statistics
+                    const warehouses = Object.values(nodes).filter(n => n.type === 'warehouse');
                     const stats = {
                         totalWarehouses: warehouses.length,
-                        totalAcres: warehouses.reduce((sum, w) => sum + (w.acres || 0), 0),
-                        totalSqft: warehouses.reduce((sum, w) => sum + (w.sqft || 0), 0),
+                        totalAcres: warehouses.reduce((sum, w) => sum + (w.data?.Acres || 0), 0),
+                        totalSqft: warehouses.reduce((sum, w) => sum + (w.data?.["Building sq.ft."] || 0), 0),
                         developers: Object.values(nodes).filter(n => n.subtype === 'developer').length,
                         purchasers: Object.values(nodes).filter(n => n.subtype === 'purchaser').length,
                         leasees: Object.values(nodes).filter(n => n.subtype === 'leasee').length
                     };
 
-                    console.log("Data processing complete. Nodes:", Object.keys(nodes).length, "Edges:", edges.length);
-                    return { nodes, edges, warehouses, stats };
+                    console.log("Mind map data processing complete. Nodes:", Object.keys(nodes).length, "Edges:", edges.length);
+                    return { nodes, edges, mindMapData, stats };
                 } catch (error) {
                     console.error("Error loading data:", error);
                     throw error;
@@ -663,7 +662,7 @@
                     await view.when();
 
                     // Load and process data
-                    const { nodes, edges, warehouses, stats } = await loadData();
+                    const { nodes, edges, mindMapData, stats } = await loadData();
                     
                     // Update statistics panel
                     document.getElementById("statsSection").innerHTML = `
@@ -686,94 +685,20 @@
                             const polyline = new Polyline({
                                 paths: [[fromNode.coords, toNode.coords]],
                                 spatialReference: { wkid: 4326 }
-                            });
-                            
-                            let color, width;
-                            switch(edge.type) {
-                                case "contains":
-                                    color = [139, 69, 19, 0.3]; // Brown for warehouse connection
-                                    width = 1;
-                                    break;
-                                case "developed":
-                                    color = [46, 134, 193, 0.8];
-                                    width = 4;
-                                    break;
-                                case "purchased":
-                                case "merger":
-                                    color = [231, 76, 60, 0.8];
-                                    width = 4;
-                                    break;
-                                case "leases":
-                                    color = [243, 156, 18, 0.8];
-                                    width = 3;
-                                    break;
-                                case "headquartered":
-                                    color = [39, 174, 96, 0.8];
-                                    width = 2;
-                                    break;
-                                default:
-                                    color = [149, 165, 166, 0.8];
-                                    width = 2;
-                            }
-                            
-                            const lineSymbol = new SimpleLineSymbol({
-                                color: color,
-                                width: width,
-                                style: edge.type === "headquartered" ? "dash" : "solid"
-                            });
-                            
-                            const graphic = new Graphic({
-                                geometry: polyline,
-                                symbol: lineSymbol,
-                                attributes: edge
-                            });
-                            
-                            edgeLayer.add(graphic);
-                        }
-                    });
-                    
-                    // Create node graphics
-                    Object.keys(nodes).forEach(nodeKey => {
-                        const node = nodes[nodeKey];
-                        const point = new Point({
-                            longitude: node.coords[0],
-                            latitude: node.coords[1],
-                            spatialReference: { wkid: 4326 }
                         });
                         
-                        let color, size;
-                        if (node.type === "warehouse") {
-                            color = [139, 69, 19]; // Brown for warehouses
-                            size = 14;
-                        } else if (node.type === "city") {
-                            if (node.subtype === "central") {
-                                color = [231, 76, 60]; // Red for Bloomington
-                                size = 24;
-                            } else {
-                                color = [52, 152, 219]; // Blue for other cities
-                                size = 10;
-                            }
-                        } else if (node.type === "entity") {
-                            switch(node.subtype) {
-                                case "developer":
-                                    color = [46, 134, 193];
-                                    size = 12 + Math.min(node.connections * 2, 10);
-                                    break;
-                                case "purchaser":
-                                    color = [231, 76, 60];
-                                    size = 12 + Math.min(node.connections * 2, 10);
-                                    break;
-                                case "leasee":
-                                    color = [243, 156, 18];
-                                    size = 10 + Math.min(node.connections * 2, 8);
-                                    break;
-                                default:
-                                    color = [149, 165, 166];
-                                    size = 8;
-                            }
-                        } else {
-                            color = [149, 165, 166];
+                        let size = 10;
+                        let color = hexToRgb(node.color || "#999999");
+                        
+                        // Adjust size based on node type and level
+                        if (node.type === "root") {
+                            size = 24;
+                        } else if (node.type === "warehouse") {
+                            size = 16;
+                        } else if (node.type === "relationship") {
                             size = 8;
+                        } else if (node.type === "entity") {
+                            size = 12 + Math.min(node.connections * 2, 8);
                         }
                         
                         const markerSymbol = new SimpleMarkerSymbol({
@@ -788,17 +713,17 @@
                         const graphic = new Graphic({
                             geometry: point,
                             symbol: markerSymbol,
-                            attributes: Object.assign({}, node, {nodeKey: nodeKey})
+                            attributes: node
                         });
                         
                         nodeLayer.add(graphic);
                         
                         // Add labels for important nodes
-                        if (node.type === "city" || node.type === "warehouse" || 
-                            (node.type === "entity" && node.connections > 1)) {
+                        if (node.type === "root" || node.type === "warehouse" || 
+                            (node.type === "entity" && node.connections > 0)) {
                             let labelText = node.name;
                             if (node.type === "warehouse") {
-                                labelText = node.id.length > 10 ? "Warehouse" : node.id;
+                                labelText = node.id.length > 10 ? "WH" : node.id;
                             }
                             
                             const textSymbol = new TextSymbol({
@@ -807,11 +732,11 @@
                                 haloColor: [255, 255, 255],
                                 haloSize: 2,
                                 font: {
-                                    size: node.type === "warehouse" ? 8 : 
-                                          (node.subtype === "central" ? 14 : 10),
-                                    weight: node.subtype === "central" ? "bold" : "normal"
+                                    size: node.type === "root" ? 14 : 
+                                          (node.type === "warehouse" ? 9 : 10),
+                                    weight: node.type === "root" ? "bold" : "normal"
                                 },
-                                yoffset: node.type === "warehouse" ? -12 : -15
+                                yoffset: -15
                             });
                             
                             const labelGraphic = new Graphic({
@@ -842,91 +767,74 @@
                                 const attrs = graphic.attributes;
                                 let infoHtml = "";
                                 
-                                if (attrs.type === "warehouse") {
-                                    // Warehouse node clicked - show complete ownership chain
-                                    infoHtml = `<h4>Warehouse Property</h4>`;
-                                    infoHtml += `<div class="warehouse-details">`;
-                                    infoHtml += `<strong>ID:</strong> ${attrs.id}<br>`;
-                                    infoHtml += `<strong>Type:</strong> ${attrs.name}<br>`;
-                                    if (attrs.category) {
-                                        infoHtml += `<strong>Status:</strong> ${attrs.category}<br>`;
-                                    }
-                                    if (attrs.year) {
-                                        infoHtml += `<strong>Year:</strong> ${attrs.year}<br>`;
-                                    }
-                                    if (attrs.acres) {
-                                        infoHtml += `<strong>Size:</strong> ${attrs.acres} acres<br>`;
-                                    }
-                                    if (attrs.sqft) {
-                                        infoHtml += `<strong>Building:</strong> ${attrs.sqft.toLocaleString()} sq.ft.<br>`;
-                                    }
-                                    infoHtml += `</div>`;
-                                    
-                                    infoHtml += `<h5>Ownership Chain:</h5>`;
-                                    infoHtml += `<div class="relationship-list">`;
-                                    if (attrs.developer) {
-                                        infoHtml += `<div class="relationship-item">→ <strong>Developed by:</strong> ${attrs.developer}</div>`;
-                                    }
-                                    if (attrs.purchaser) {
-                                        infoHtml += `<div class="relationship-item">→ <strong>Purchased by:</strong> ${attrs.purchaser}</div>`;
-                                    }
-                                    if (attrs.leasee) {
-                                        infoHtml += `<div class="relationship-item">→ <strong>Leased to:</strong> ${attrs.leasee}</div>`;
-                                    }
-                                    infoHtml += `</div>`;
-                                    
-                                } else if (attrs.type === "entity") {
-                                    // Entity node clicked - show all warehouses they're connected to
+                                if (attrs.type === "root") {
+                                    // Root node clicked
                                     infoHtml = `<h4>${attrs.name}</h4>`;
-                                    infoHtml += `<p><strong>Role:</strong> ${attrs.subtype.charAt(0).toUpperCase() + attrs.subtype.slice(1)}</p>`;
-                                    if (attrs.origin && attrs.origin !== "Unknown") {
-                                        infoHtml += `<p><strong>Headquarters:</strong> ${attrs.origin}</p>`;
+                                    infoHtml += `<div class="warehouse-details">${attrs.details}</div>`;
+                                    infoHtml += `<p><strong>Total Warehouses:</strong> ${mindMapData.children.length}</p>`;
+                                    
+                                } else if (attrs.type === "warehouse") {
+                                    // Warehouse node clicked - show complete mind map branch
+                                    const warehouseData = attrs.data;
+                                    infoHtml = `<h4>Warehouse: ${attrs.id}</h4>`;
+                                    infoHtml += `<div class="warehouse-details">`;
+                                    infoHtml += `<div>${attrs.details}</div>`;
+                                    if (warehouseData?.Category) {
+                                        infoHtml += `<div><strong>Status:</strong> ${warehouseData.Category}</div>`;
                                     }
-                                    if (attrs.connections) {
-                                        infoHtml += `<p><strong>Connections:</strong> ${attrs.connections}</p>`;
+                                    if (warehouseData?.["Year built/approved"]) {
+                                        infoHtml += `<div><strong>Year:</strong> ${warehouseData["Year built/approved"]}</div>`;
                                     }
-                                    if (attrs.warehouses && attrs.warehouses.length > 0) {
-                                        infoHtml += `<h5>Connected Warehouses (${attrs.warehouses.length}):</h5>`;
-                                        infoHtml += `<div class="relationship-list">`;
-                                        attrs.warehouses.forEach(warehouseId => {
-                                            const warehouse = nodes[warehouseId];
-                                            if (warehouse) {
-                                                infoHtml += `<div class="relationship-item">• ${warehouseId}`;
-                                                if (warehouse.acres) {
-                                                    infoHtml += ` (${warehouse.acres} acres)`;
-                                                }
+                                    infoHtml += `</div>`;
+                                    
+                                    // Find and display the mind map branch for this warehouse
+                                    const warehouseBranch = mindMapData.children.find(w => 
+                                        w.name === attrs.id || w.name === attrs.name
+                                    );
+                                    
+                                    if (warehouseBranch && warehouseBranch.children.length > 0) {
+                                        infoHtml += `<h5>Ownership Structure:</h5>`;
+                                        warehouseBranch.children.forEach(branch => {
+                                            infoHtml += `<div class="mind-map-branch" style="border-left-color: ${branch.color};">`;
+                                            infoHtml += `<div class="branch-title">${branch.name}</div>`;
+                                            infoHtml += `<div class="branch-details">${branch.details}</div>`;
+                                            if (branch.children && branch.children.length > 0) {
+                                                infoHtml += `<div class="tree-structure">`;
+                                                branch.children.forEach(entity => {
+                                                    infoHtml += `<div class="tree-node">`;
+                                                    infoHtml += `<strong>${entity.name}</strong><br>`;
+                                                    infoHtml += `<span style="font-size: 11px;">${entity.details}</span>`;
+                                                    infoHtml += `</div>`;
+                                                });
                                                 infoHtml += `</div>`;
                                             }
+                                            infoHtml += `</div>`;
                                         });
-                                        infoHtml += `</div>`;
                                     }
                                     
-                                } else if (attrs.type === "city") {
-                                    // City node clicked
+                                } else if (attrs.type === "relationship") {
+                                    // Relationship node clicked
                                     infoHtml = `<h4>${attrs.name}</h4>`;
-                                    infoHtml += `<p><strong>Type:</strong> ${attrs.subtype === "central" ? "Central Hub" : "Headquarters Location"}</p>`;
-                                    if (attrs.connections) {
+                                    infoHtml += `<p>${attrs.details}</p>`;
+                                    
+                                } else if (attrs.type === "entity") {
+                                    // Entity node clicked
+                                    infoHtml = `<h4>${attrs.name}</h4>`;
+                                    infoHtml += `<p><strong>Type:</strong> ${attrs.subtype.charAt(0).toUpperCase() + attrs.subtype.slice(1)}</p>`;
+                                    infoHtml += `<p>${attrs.details}</p>`;
+                                    if (attrs.connections > 0) {
                                         infoHtml += `<p><strong>Connections:</strong> ${attrs.connections}</p>`;
-                                    }
-                                    if (attrs.warehouses && attrs.warehouses.length > 0) {
-                                        infoHtml += `<p><strong>Warehouses:</strong> ${attrs.warehouses.length}</p>`;
                                     }
                                     
                                 } else if (attrs.from && attrs.to) {
                                     // Edge clicked
-                                    infoHtml = `<h4>Connection Details</h4>`;
+                                    infoHtml = `<h4>Connection</h4>`;
                                     infoHtml += `<p><strong>From:</strong> ${attrs.from}</p>`;
                                     infoHtml += `<p><strong>To:</strong> ${attrs.to}</p>`;
                                     infoHtml += `<p><strong>Type:</strong> ${attrs.type}</p>`;
-                                    if (attrs.category) {
-                                        infoHtml += `<p><strong>Category:</strong> ${attrs.category}</p>`;
-                                    }
-                                    if (attrs.year) {
-                                        infoHtml += `<p><strong>Year:</strong> ${attrs.year}</p>`;
-                                    }
                                 }
                                 
-                                document.getElementById("nodeInfo").innerHTML = infoHtml || "<p>Click on warehouses, entities, or connections for details</p>";
+                                document.getElementById("nodeInfo").innerHTML = infoHtml || "<p>Click on nodes for details</p>";
                             }
                         });
                     });
@@ -954,10 +862,26 @@
                     document.getElementById("errorMessage").textContent = error.message;
                 }
             }
+            
+            // Helper function to convert hex to RGB
+            function hexToRgb(hex) {
+                const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+                return result ? [
+                    parseInt(result[1], 16),
+                    parseInt(result[2], 16),
+                    parseInt(result[3], 16)
+                ] : [128, 128, 128];
+            }
+            
+            // Helper function to convert hex to RGBA
+            function hexToRgba(hex, alpha) {
+                const rgb = hexToRgb(hex);
+                return [...rgb, alpha];
+            }
 
             // Start the application
             initializeMap();
         });
     </script>
 </body>
-</html>
+</html> 
