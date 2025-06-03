@@ -684,7 +684,59 @@
                         if (fromNode && toNode) {
                             const polyline = new Polyline({
                                 paths: [[fromNode.coords, toNode.coords]],
-                                spatialReference: { wkid: 4326 }
+                                spatialReference: { wkid: wkid: 4326 }
+                            });
+                            
+                            let color, width, style;
+                            if (edge.type === "contains" && fromNode.type === "root") {
+                                color = [139, 69, 19, 0.8];
+                                width = 4;
+                                style = "solid";
+                            } else if (edge.type === "contains") {
+                                color = edge.color ? hexToRgba(edge.color, 0.6) : [149, 165, 166, 0.6];
+                                width = 2;
+                                style = "solid";
+                            } else if (edge.type === "developer") {
+                                color = [46, 134, 193, 0.8];
+                                width = 3;
+                                style = "solid";
+                            } else if (edge.type === "purchaser") {
+                                color = [231, 76, 60, 0.8];
+                                width = 3;
+                                style = "solid";
+                            } else if (edge.type === "leasee") {
+                                color = [243, 156, 18, 0.8];
+                                width = 3;
+                                style = "solid";
+                            } else {
+                                color = [149, 165, 166, 0.8];
+                                width = 2;
+                                style = "dash";
+                            }
+                            
+                            const lineSymbol = new SimpleLineSymbol({
+                                color: color,
+                                width: width,
+                                style: style
+                            });
+                            
+                            const graphic = new Graphic({
+                                geometry: polyline,
+                                symbol: lineSymbol,
+                                attributes: edge
+                            });
+                            
+                            edgeLayer.add(graphic);
+                        }
+                    });
+
+                    // Create node graphics
+                    Object.keys(nodes).forEach(nodeKey => {
+                        const node = nodes[nodeKey];
+                        const point = new Point({
+                            longitude: node.coords[0],
+                            latitude: node.coords[1],
+                            spatialReference: { wkid: 4326 }
                         });
                         
                         let size = 10;
