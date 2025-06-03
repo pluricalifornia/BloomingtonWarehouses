@@ -184,7 +184,21 @@
                 "Los Angeles, CA": [-118.243, 34.052],
                 "Chicago, IL": [-87.629, 41.878],
                 "New York, NY": [-74.006, 40.713],
-                "Washington, DC": [-77.036, 38.895]
+                "Washington, DC": [-77.036, 38.895],
+                "Miami Beach, FL": [-80.130, 25.790],
+                "Allisonville, IN": [-86.004, 39.977],
+                "Arcadia, AZ": [-111.093, 33.502],
+                "Manhattan, NY": [-73.966, 40.783],
+                "Belvedere Tiburon, CA": [-122.456, 37.873],
+                "Lake Highlands, TX": [-96.720, 32.885],
+                "Pacific Palisades, CA": [-118.535, 34.046],
+                "Palm Springs, CA": [-116.545, 33.830],
+                "Alessandro Heights, CA": [-117.274, 33.914],
+                "La Cañada Flintridge, CA": [-118.200, 34.207],
+                "Mentone, CA": [-117.120, 34.065],
+                "Newport Coast, CA": [-117.837, 33.600],
+                "Brentwood, CA": [-118.472, 34.058],
+                "Kihei, HI": [-156.447, 20.785]
             };
 
             // Geocoding function using ArcGIS locator
@@ -244,6 +258,51 @@
                 return entityOffsets[key];
             }
 
+            // Helper function to clean location strings
+            function cleanLocation(location) {
+                if (!location || typeof location !== 'string') return null;
+                
+                // Remove extra quotes and whitespace
+                let cleaned = location.trim().replace(/["\\"]/g, '').trim();
+                
+                // List of invalid location values to filter out
+                const invalidLocations = ['TBD', 'TBA', 'N/A', 'CA', 'TX', 'Florida', 'Unknown', ''];
+                if (invalidLocations.includes(cleaned)) return null;
+                
+                // Fix common issues
+                if (cleaned === 'Bethseda, MD') cleaned = 'Bethesda, MD';
+                
+                // Add state to city names that are missing it
+                const cityStateMap = {
+                    'Highland Park': 'Highland Park, TX',
+                    'Miami Beach': 'Miami Beach, FL',
+                    'Alessandro Heights': 'Alessandro Heights, CA',
+                    'La Cañada Flintridge': 'La Cañada Flintridge, CA',
+                    'Mentone': 'Mentone, CA',
+                    'Newport Coast': 'Newport Coast, CA'
+                };
+                
+                if (cityStateMap[cleaned]) {
+                    cleaned = cityStateMap[cleaned];
+                }
+                
+                return cleaned;
+            }
+            
+            // Helper function to clean entity names
+            function cleanEntityName(name) {
+                if (!name || typeof name !== 'string') return null;
+                
+                // Remove extra quotes and whitespace
+                let cleaned = name.trim().replace(/["\\"]/g, '').trim();
+                
+                // Filter out invalid entity names
+                const invalidNames = ['TBD', 'TBA', 'N/A', 'Purchase', 'Merger', ''];
+                if (invalidNames.includes(cleaned)) return null;
+                
+                return cleaned;
+            }
+
             // Load and parse CSV data
             async function loadData() {
                 try {
@@ -293,22 +352,24 @@
                     // Process each row with geocoding
                     for (const row of parsed.data) {
                         // Process Developer
-                        if (row.Developer && row.Developer !== "TBD" && row.Developer.trim() !== "") {
-                            const developer = row.Developer.trim();
-                            const devOrigin = row.DevOriginCity || "Unknown";
-                            
-                            if (!nodes[developer]) {
-                                const coords = await getCoordinatesForEntity(devOrigin, developer);
-                                nodes[developer] = {
-                                    name: developer,
+                        const developerName = cleanEntityName(row.Developer);
+                        const devOrigin = cleanLocation(row.DevOriginCity);
+                        
+                        if (developerName) {
+                            if (!nodes[developerName]) {
+                                const coords = devOrigin ? 
+                                    await getCoordinatesForEntity(devOrigin, developerName) :
+                                    await getCoordinatesForEntity("California", developerName);
+                                nodes[developerName] = {
+                                    name: developerName,
                                     type: "developer",
                                     coords: coords,
-                                    origin: devOrigin,
+                                    origin: devOrigin || "Unknown",
                                     connections: 0
                                 };
                             }
                             
-                            if (!nodes[devOrigin] && devOrigin !== "Unknown" && devOrigin !== "TBD") {
+                            if (devOrigin && !nodes[devOrigin]) {
                                 const coords = await geocodeLocation(devOrigin);
                                 nodes[devOrigin] = {
                                     name: devOrigin,
@@ -319,17 +380,17 @@
                             }
                             
                             // Add edges
-                            if (devOrigin !== "Unknown" && devOrigin !== "TBD") {
+                            if (devOrigin) {
                                 edges.push({
                                     from: devOrigin,
-                                    to: developer,
+                                    to: developerName,
                                     type: "headquartered",
                                     category: "developer"
                                 });
                             }
                             
                             edges.push({
-                                from: developer,
+                                from: developerName,
                                 to: "Bloomington, CA",
                                 type: "develops",
                                 property: row["Assessor parcel number"],
@@ -341,7 +402,7 @@
                             if (bloomNode) {
                                 bloomNode.properties.push({
                                     parcel: row["Assessor parcel number"],
-                                    developer: developer,
+                                    developer: developerName,
                                     acres: row.Acres,
                                     sqft: row["Building sq.ft."]
                                 });
@@ -349,24 +410,24 @@
                         }
                         
                         // Process Purchaser
-                        if (row["Purchaser/Merger"] && row["Purchaser/Merger"] !== "TBD" && 
-                            row["Purchaser/Merger"] !== " TX\"" && row["Purchaser/Merger"] !== "Purchase" &&
-                            row["Purchaser/Merger"].trim() !== "") {
-                            const purchaser = row["Purchaser/Merger"].trim();
-                            const purchOrigin = row.PurchaserOriginCity || "Unknown";
-                            
-                            if (!nodes[purchaser]) {
-                                const coords = await getCoordinatesForEntity(purchOrigin, purchaser);
-                                nodes[purchaser] = {
-                                    name: purchaser,
+                        const purchaserName = cleanEntityName(row["Purchaser/Merger"]);
+                        const purchOrigin = cleanLocation(row.PurchaserOriginCity);
+                        
+                        if (purchaserName) {
+                            if (!nodes[purchaserName]) {
+                                const coords = purchOrigin ? 
+                                    await getCoordinatesForEntity(purchOrigin, purchaserName) :
+                                    await getCoordinatesForEntity("California", purchaserName);
+                                nodes[purchaserName] = {
+                                    name: purchaserName,
                                     type: "purchaser",
                                     coords: coords,
-                                    origin: purchOrigin,
+                                    origin: purchOrigin || "Unknown",
                                     connections: 0
                                 };
                             }
                             
-                            if (!nodes[purchOrigin] && purchOrigin !== "Unknown" && purchOrigin !== "TBD") {
+                            if (purchOrigin && !nodes[purchOrigin]) {
                                 const coords = await geocodeLocation(purchOrigin);
                                 nodes[purchOrigin] = {
                                     name: purchOrigin,
@@ -376,19 +437,19 @@
                                 };
                             }
                             
-                            if (purchOrigin !== "Unknown" && purchOrigin !== "TBD") {
+                            if (purchOrigin) {
                                 edges.push({
                                     from: purchOrigin,
-                                    to: purchaser,
+                                    to: purchaserName,
                                     type: "headquartered",
                                     category: "purchaser"
                                 });
                             }
                             
-                            if (row.Developer && row.Developer !== "TBD") {
+                            if (developerName) {
                                 edges.push({
-                                    from: row.Developer.trim(),
-                                    to: purchaser,
+                                    from: developerName,
+                                    to: purchaserName,
                                     type: row["Transaction Type"] || "purchase",
                                     property: row["Assessor parcel number"]
                                 });
@@ -396,23 +457,24 @@
                         }
                         
                         // Process Leasee
-                        if (row.Leasee && row.Leasee !== "TBD" && row.Leasee !== "Purchase" && 
-                            row.Leasee.trim() !== "") {
-                            const leasee = row.Leasee.trim();
-                            const leaseeOrigin = row.LeaseeOriginCity || "Unknown";
-                            
-                            if (!nodes[leasee]) {
-                                const coords = await getCoordinatesForEntity(leaseeOrigin, leasee);
-                                nodes[leasee] = {
-                                    name: leasee,
+                        const leaseeName = cleanEntityName(row.Leasee);
+                        const leaseeOrigin = cleanLocation(row.LeaseeOriginCity);
+                        
+                        if (leaseeName) {
+                            if (!nodes[leaseeName]) {
+                                const coords = leaseeOrigin ? 
+                                    await getCoordinatesForEntity(leaseeOrigin, leaseeName) :
+                                    await getCoordinatesForEntity("California", leaseeName);
+                                nodes[leaseeName] = {
+                                    name: leaseeName,
                                     type: "leasee",
                                     coords: coords,
-                                    origin: leaseeOrigin,
+                                    origin: leaseeOrigin || "Unknown",
                                     connections: 0
                                 };
                             }
                             
-                            if (!nodes[leaseeOrigin] && leaseeOrigin !== "Unknown" && leaseeOrigin !== "TBD") {
+                            if (leaseeOrigin && !nodes[leaseeOrigin]) {
                                 const coords = await geocodeLocation(leaseeOrigin);
                                 nodes[leaseeOrigin] = {
                                     name: leaseeOrigin,
@@ -422,20 +484,20 @@
                                 };
                             }
                             
-                            if (leaseeOrigin !== "Unknown" && leaseeOrigin !== "TBD") {
+                            if (leaseeOrigin) {
                                 edges.push({
                                     from: leaseeOrigin,
-                                    to: leasee,
+                                    to: leaseeName,
                                     type: "headquartered",
                                     category: "leasee"
                                 });
                             }
                             
-                            const lessor = row["Purchaser/Merger"] !== "TBD" ? row["Purchaser/Merger"] : row.Developer;
-                            if (lessor && lessor !== "TBD" && lessor.trim() !== "") {
+                            const lessor = purchaserName || developerName;
+                            if (lessor) {
                                 edges.push({
-                                    from: lessor.trim(),
-                                    to: leasee,
+                                    from: lessor,
+                                    to: leaseeName,
                                     type: "leases to",
                                     property: row["Assessor parcel number"]
                                 });
