@@ -276,19 +276,19 @@
                         skipEmptyLines: true
                     });
 
-                    // Initialize collections using standard JavaScript Map
-                    const nodes = new Map();
+                    // Initialize collections using plain objects
+                    const nodes = {};
                     const edges = [];
                     
                     // Add Bloomington as central node first
                     const bloomingtonCoords = await geocodeLocation("Bloomington, CA");
-                    nodes.set("Bloomington, CA", {
+                    nodes["Bloomington, CA"] = {
                         name: "Bloomington, CA",
                         type: "city",
                         coords: bloomingtonCoords,
                         connections: 0,
                         properties: []
-                    });
+                    };
 
                     // Process each row with geocoding
                     for (const row of parsed.data) {
@@ -297,25 +297,25 @@
                             const developer = row.Developer.trim();
                             const devOrigin = row.DevOriginCity || "Unknown";
                             
-                            if (!nodes.has(developer)) {
+                            if (!nodes[developer]) {
                                 const coords = await getCoordinatesForEntity(devOrigin, developer);
-                                nodes.set(developer, {
+                                nodes[developer] = {
                                     name: developer,
                                     type: "developer",
                                     coords: coords,
                                     origin: devOrigin,
                                     connections: 0
-                                });
+                                };
                             }
                             
-                            if (!nodes.has(devOrigin) && devOrigin !== "Unknown" && devOrigin !== "TBD") {
+                            if (!nodes[devOrigin] && devOrigin !== "Unknown" && devOrigin !== "TBD") {
                                 const coords = await geocodeLocation(devOrigin);
-                                nodes.set(devOrigin, {
+                                nodes[devOrigin] = {
                                     name: devOrigin,
                                     type: "city",
                                     coords: coords,
                                     connections: 0
-                                });
+                                };
                             }
                             
                             // Add edges
@@ -337,7 +337,7 @@
                                 sqft: row["Building sq.ft."]
                             });
                             
-                            const bloomNode = nodes.get("Bloomington, CA");
+                            const bloomNode = nodes["Bloomington, CA"];
                             if (bloomNode) {
                                 bloomNode.properties.push({
                                     parcel: row["Assessor parcel number"],
@@ -355,25 +355,25 @@
                             const purchaser = row["Purchaser/Merger"].trim();
                             const purchOrigin = row.PurchaserOriginCity || "Unknown";
                             
-                            if (!nodes.has(purchaser)) {
+                            if (!nodes[purchaser]) {
                                 const coords = await getCoordinatesForEntity(purchOrigin, purchaser);
-                                nodes.set(purchaser, {
+                                nodes[purchaser] = {
                                     name: purchaser,
                                     type: "purchaser",
                                     coords: coords,
                                     origin: purchOrigin,
                                     connections: 0
-                                });
+                                };
                             }
                             
-                            if (!nodes.has(purchOrigin) && purchOrigin !== "Unknown" && purchOrigin !== "TBD") {
+                            if (!nodes[purchOrigin] && purchOrigin !== "Unknown" && purchOrigin !== "TBD") {
                                 const coords = await geocodeLocation(purchOrigin);
-                                nodes.set(purchOrigin, {
+                                nodes[purchOrigin] = {
                                     name: purchOrigin,
                                     type: "city",
                                     coords: coords,
                                     connections: 0
-                                });
+                                };
                             }
                             
                             if (purchOrigin !== "Unknown" && purchOrigin !== "TBD") {
@@ -401,25 +401,25 @@
                             const leasee = row.Leasee.trim();
                             const leaseeOrigin = row.LeaseeOriginCity || "Unknown";
                             
-                            if (!nodes.has(leasee)) {
+                            if (!nodes[leasee]) {
                                 const coords = await getCoordinatesForEntity(leaseeOrigin, leasee);
-                                nodes.set(leasee, {
+                                nodes[leasee] = {
                                     name: leasee,
                                     type: "leasee",
                                     coords: coords,
                                     origin: leaseeOrigin,
                                     connections: 0
-                                });
+                                };
                             }
                             
-                            if (!nodes.has(leaseeOrigin) && leaseeOrigin !== "Unknown" && leaseeOrigin !== "TBD") {
+                            if (!nodes[leaseeOrigin] && leaseeOrigin !== "Unknown" && leaseeOrigin !== "TBD") {
                                 const coords = await geocodeLocation(leaseeOrigin);
-                                nodes.set(leaseeOrigin, {
+                                nodes[leaseeOrigin] = {
                                     name: leaseeOrigin,
                                     type: "city",
                                     coords: coords,
                                     connections: 0
-                                });
+                                };
                             }
                             
                             if (leaseeOrigin !== "Unknown" && leaseeOrigin !== "TBD") {
@@ -445,13 +445,13 @@
 
                     // Count connections
                     edges.forEach(edge => {
-                        const fromNode = nodes.get(edge.from);
-                        const toNode = nodes.get(edge.to);
+                        const fromNode = nodes[edge.from];
+                        const toNode = nodes[edge.to];
                         if (fromNode) fromNode.connections++;
                         if (toNode) toNode.connections++;
                     });
 
-                    console.log("Data processing complete. Nodes:", nodes.size, "Edges:", edges.length);
+                    console.log("Data processing complete. Nodes:", Object.keys(nodes).length, "Edges:", edges.length);
                     return { nodes, edges };
                 } catch (error) {
                     console.error("Error loading data:", error);
@@ -489,8 +489,8 @@
                     
                     // Create edge graphics
                     edges.forEach(edge => {
-                        const fromNode = nodes.get(edge.from);
-                        const toNode = nodes.get(edge.to);
+                        const fromNode = nodes[edge.from];
+                        const toNode = nodes[edge.to];
                         
                         if (fromNode && toNode) {
                             const polyline = new Polyline({
@@ -539,7 +539,8 @@
                     });
                     
                     // Create node graphics
-                    nodes.forEach((node, name) => {
+                    Object.keys(nodes).forEach(name => {
+                        const node = nodes[name];
                         const point = new Point({
                             longitude: node.coords[0],
                             latitude: node.coords[1],
@@ -581,7 +582,7 @@
                         const graphic = new Graphic({
                             geometry: point,
                             symbol: markerSymbol,
-                            attributes: node
+                            attributes: Object.assign({}, node, {nodeKey: name})
                         });
                         
                         nodeLayer.add(graphic);
