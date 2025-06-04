@@ -222,18 +222,24 @@
     </div>
 
     <script>
-        // GitHub content URLs for CSV files
-        const githubBaseUrl = "https://raw.githubusercontent.com/pluricalifornia/BloomingtonWarehouses/main/";
-        
-        // Flag to control using static data vs GitHub data
-        let useStaticData = false; // Set to false to attempt GitHub loading
-        
-        // Static CSV data embedded in the HTML as a fallback
+        // Embedded CSV data
         const csvData = `"Category","Assessor parcel number","Building classification","Year built/approved","Acres","Building sq.ft.",Developer,DevOriginCity,Purchaser/Merger,Category,Leasee,PurchaserOriginCity,LeaseeOriginCity,Endpoint
 "Approved","Bloomington Business Park","https://ceqanet.opr.ca.gov/2020120545/3","2025","181","4340000",Howard Industrial Partners LLC,"Lemon Heights, CA",TBD,TBD,TBD,TBD,TBD,"Bloomington, CA"
 "Existing","025217367","transit warehouse (truck terminal)","2001","47","1133000",Pacific Industrial,"Newport Beach, CA",Realterm,Purchase,YellowCorp,"Annapolis, MD",TBD,"Bloomington, CA"
 "Existing","Bloomington Logistics Center","distribution warehouse","2019","35","827000", Crow holdings Industrial, "Highland Park, TX", ASB Real Estate Investments,Purchase,TBD,"Bethseda, MD",TBD,"Bloomington, CA"
 "Existing","025215217","distribution warehouse","2018","28","674000", DCT Industrial Trust,"Evergreen, CO",Prologis,Merger,TBD,"Pacific Heights, CA",TBD,"Bloomington, CA"`;
+
+        // Embedded GeoJSON data
+        const geoJsonData = {
+            "type": "FeatureCollection",
+            "features": [
+                {"type": "Feature", "properties": {"apn": "025209120", "shape_area": 97800.0, "category": "Existing", "year_built": 2000.0, "class": "storage warehouse"}, "geometry": {"type": "Polygon", "coordinates": [[[-117.404333118881311, 34.072243467102972], [-117.404060713129894, 34.072244036506802], [-117.404054731816018, 34.070615477075371], [-117.404599545427914, 34.070614072689303], [-117.404605522175856, 34.072242632920364], [-117.404333118881311, 34.072243467102972]]]}},
+                {"type": "Feature", "properties": {"apn": "025217367", "shape_area": 2060200.0, "category": "Existing", "year_built": 2001.0, "class": "transit warehouse (truck terminal)"}, "geometry": {"type": "Polygon", "coordinates": [[[-117.400691199139658, 34.066746635935004], [-117.400955243574387, 34.066740453094049], [-117.400957900684759, 34.066738821856688], [-117.401019396365598, 34.066631462486882], [-117.401019540288672, 34.066634209855465], [-117.40101961378025, 34.066636957781768], [-117.400691199139658, 34.066746635935004]]]}},
+                {"type": "Feature", "properties": {"apn": "025215217", "shape_area": 1224600.0, "category": "Existing", "year_built": 2018.0, "class": "distribution warehouse"}, "geometry": {"type": "Polygon", "coordinates": [[[-117.416191240263402, 34.066448915526273], [-117.413858015459141, 34.066512656756771], [-117.413857294436554, 34.066434517413107], [-117.413857040284483, 34.066352053829846], [-117.416191240263402, 34.066448915526273]]]}},
+                {"type": "Feature", "properties": {"apn": "Bloomington Business Park", "shape_area": 7891000.0, "category": "Approved", "year_built": 2025.0, "class": "https://ceqanet.opr.ca.gov/2020120545/3"}, "geometry": {"type": "MultiPolygon", "coordinates": [[[[-117.400892, 34.0521], [-117.400926, 34.048686], [-117.404977, 34.048708], [-117.404999, 34.052125], [-117.400892, 34.0521]]]]}},
+                {"type": "Feature", "properties": {"apn": "025317116", "shape_area": 517900.0, "category": "Existing", "year_built": 2019.0, "class": "distribution warehouse"}, "geometry": {"type": "Polygon", "coordinates": [[[-117.398391841172796, 34.067110423725218], [-117.397748316874384, 34.067110981477526], [-117.39774831439442, 34.067105457704805], [-117.397106561020365, 34.067105755814076], [-117.398391841172796, 34.067110423725218]]]}}
+            ]
+        };
 
         require([
             "esri/Map",
@@ -241,20 +247,77 @@
             "esri/Graphic",
             "esri/layers/GraphicsLayer",
             "esri/geometry/Point",
+            "esri/geometry/Polygon",
             "esri/geometry/Polyline",
             "esri/symbols/SimpleMarkerSymbol",
+            "esri/symbols/SimpleFillSymbol",
             "esri/symbols/SimpleLineSymbol",
             "esri/symbols/TextSymbol",
             "esri/rest/locator",
-            "esri/rest/support/AddressCandidate",
             "esri/widgets/Popup"
-        ], function(Map, MapView, Graphic, GraphicsLayer, Point, Polyline, 
-                   SimpleMarkerSymbol, SimpleLineSymbol, TextSymbol, locator, AddressCandidate, Popup) {
+        ], function(Map, MapView, Graphic, GraphicsLayer, Point, Polygon, Polyline, 
+                   SimpleMarkerSymbol, SimpleFillSymbol, SimpleLineSymbol, TextSymbol, locator, Popup) {
 
             // Cache for geocoded locations
             const geocodeCache = {};
             
-            // Predefined coordinates for known cities (fallback)
+            // Map to store GeoJSON features by APN
+            const geoJsonByApn = {};
+            geoJsonData.features.forEach(feature => {
+                if (feature.properties.apn) {
+                    geoJsonByApn[feature.properties.apn] = feature;
+                }
+            });
+
+            // Function to get centroid of a polygon
+            function getPolygonCentroid(coordinates) {
+                let sumX = 0, sumY = 0, count = 0;
+                
+                // Handle MultiPolygon
+                if (coordinates.length > 0 && Array.isArray(coordinates[0][0][0])) {
+                    // It's a MultiPolygon
+                    coordinates.forEach(polygon => {
+                        polygon.forEach(ring => {
+                            ring.forEach(coord => {
+                                sumX += coord[0];
+                                sumY += coord[1];
+                                count++;
+                            });
+                        });
+                    });
+                } else {
+                    // It's a regular Polygon
+                    coordinates.forEach(ring => {
+                        ring.forEach(coord => {
+                            sumX += coord[0];
+                            sumY += coord[1];
+                            count++;
+                        });
+                    });
+                }
+                
+                return [sumX / count, sumY / count];
+            }
+
+            // Get warehouse position from GeoJSON or generate one
+            function getWarehousePositionFromGeoJson(apn, index, total) {
+                const feature = geoJsonByApn[apn];
+                if (feature && feature.geometry) {
+                    return getPolygonCentroid(feature.geometry.coordinates);
+                }
+                
+                // Fallback to generated position if no GeoJSON match
+                const bloomingtonCoords = [-117.396, 34.070];
+                const radius = 0.15;
+                const angle = (index / total) * 2 * Math.PI;
+                
+                return [
+                    bloomingtonCoords[0] + radius * Math.cos(angle),
+                    bloomingtonCoords[1] + radius * Math.sin(angle)
+                ];
+            }
+
+            // Predefined coordinates for known cities
             const cityCoords = {
                 "Bloomington, CA": [-117.396, 34.070],
                 "Lemon Heights, CA": [-117.823, 33.765],
@@ -262,52 +325,23 @@
                 "Annapolis, MD": [-76.492, 38.978],
                 "Highland Park, TX": [-96.792, 32.834],
                 "Bethesda, MD": [-77.094, 38.984],
-                "Bethseda, MD": [-77.094, 38.984], // Handle typo
+                "Bethseda, MD": [-77.094, 38.984],
                 "Evergreen, CO": [-105.321, 39.633],
-                "Pacific Heights, CA": [-122.447, 37.794],
-                "San Francisco, CA": [-122.419, 37.774],
-                "Denver, CO": [-104.990, 39.739],
-                "Irvine, CA": [-117.826, 33.684],
-                "Costa Mesa, CA": [-117.919, 33.641],
-                "City of Industry, CA": [-117.958, 34.019],
-                "Santa Ana, CA": [-117.868, 33.745],
-                "Newport, CA": [-117.928, 33.618],
-                "Dallas, TX": [-96.797, 32.777],
-                "Los Angeles, CA": [-118.243, 34.052],
-                "Chicago, IL": [-87.629, 41.878],
-                "New York, NY": [-74.006, 40.713],
-                "Washington, DC": [-77.036, 38.895],
-                "Miami Beach, FL": [-80.130, 25.790],
-                "Allisonville, IN": [-86.004, 39.977],
-                "Arcadia, AZ": [-111.093, 33.502],
-                "Manhattan, NY": [-73.966, 40.783],
-                "Belvedere Tiburon, CA": [-122.456, 37.873],
-                "Lake Highlands, TX": [-96.720, 32.885],
-                "Pacific Palisades, CA": [-118.535, 34.046],
-                "Palm Springs, CA": [-116.545, 33.830],
-                "Alessandro Heights, CA": [-117.274, 33.914],
-                "La Cañada Flintridge, CA": [-118.200, 34.207],
-                "Mentone, CA": [-117.120, 34.065],
-                "Newport Coast, CA": [-117.837, 33.600],
-                "Brentwood, CA": [-118.472, 34.058],
-                "Kihei, HI": [-156.447, 20.785]
+                "Pacific Heights, CA": [-122.447, 37.794]
             };
 
-            // Geocoding function using ArcGIS locator
+            // Geocoding function
             async function geocodeLocation(address) {
-                // Check cache first
                 if (geocodeCache[address]) {
                     return geocodeCache[address];
                 }
                 
-                // Check predefined coordinates
                 if (cityCoords[address]) {
                     geocodeCache[address] = cityCoords[address];
                     return cityCoords[address];
                 }
                 
                 try {
-                    // Use ArcGIS geocoding service
                     const geocodeUrl = "https://geocode-api.arcgis.com/arcgis/rest/services/World/GeocodeServer";
                     const result = await locator.addressToLocations(geocodeUrl, {
                         address: {
@@ -325,7 +359,6 @@
                     console.warn(`Geocoding failed for ${address}:`, error);
                 }
                 
-                // Fallback to default location with offset
                 const defaultCoords = [-117.4 + (Math.random() - 0.5) * 2, 34.0 + (Math.random() - 0.5) * 2];
                 geocodeCache[address] = defaultCoords;
                 return defaultCoords;
@@ -336,12 +369,11 @@
             async function getCoordinatesForEntity(location, entityName) {
                 const baseCoords = await geocodeLocation(location);
                 
-                // Add offset for multiple entities in same location
                 const key = location + "|" + entityName;
                 if (!entityOffsets[key]) {
                     const count = Object.keys(entityOffsets).filter(k => k.startsWith(location)).length;
                     const angle = (count * 72) * Math.PI / 180;
-                    const offset = 0.05; // Smaller offset for cleaner appearance
+                    const offset = 0.05;
                     entityOffsets[key] = [
                         baseCoords[0] + offset * Math.cos(angle),
                         baseCoords[1] + offset * Math.sin(angle)
@@ -350,28 +382,20 @@
                 return entityOffsets[key];
             }
 
-            // Helper function to clean location strings
+            // Helper functions for data cleaning
             function cleanLocation(location) {
                 if (!location || typeof location !== 'string') return null;
                 
-                // Remove extra quotes and whitespace
                 let cleaned = location.trim().replace(/["\\"]/g, '').trim();
                 
-                // List of invalid location values to filter out
                 const invalidLocations = ['TBD', 'TBA', 'N/A', 'CA', 'TX', 'Florida', 'Unknown', ''];
                 if (invalidLocations.includes(cleaned)) return null;
                 
-                // Fix common issues
                 if (cleaned === 'Bethseda, MD') cleaned = 'Bethesda, MD';
                 
-                // Add state to city names that are missing it
                 const cityStateMap = {
                     'Highland Park': 'Highland Park, TX',
-                    'Miami Beach': 'Miami Beach, FL',
-                    'Alessandro Heights': 'Alessandro Heights, CA',
-                    'La Cañada Flintridge': 'La Cañada Flintridge, CA',
-                    'Mentone': 'Mentone, CA',
-                    'Newport Coast': 'Newport Coast, CA'
+                    'Miami Beach': 'Miami Beach, FL'
                 };
                 
                 if (cityStateMap[cleaned]) {
@@ -381,30 +405,15 @@
                 return cleaned;
             }
             
-            // Helper function to clean entity names
             function cleanEntityName(name) {
                 if (!name || typeof name !== 'string') return null;
                 
-                // Remove extra quotes and whitespace
                 let cleaned = name.trim().replace(/["\\"]/g, '').trim();
                 
-                // Filter out invalid entity names
                 const invalidNames = ['TBD', 'TBA', 'N/A', 'Purchase', 'Merger', ''];
                 if (invalidNames.includes(cleaned)) return null;
                 
                 return cleaned;
-            }
-
-            // Generate warehouse node position around Bloomington
-            function getWarehousePosition(index, total) {
-                const bloomingtonCoords = cityCoords["Bloomington, CA"];
-                const radius = 0.15; // Radius around Bloomington for warehouse placement
-                const angle = (index / total) * 2 * Math.PI;
-                
-                return [
-                    bloomingtonCoords[0] + radius * Math.cos(angle),
-                    bloomingtonCoords[1] + radius * Math.sin(angle)
-                ];
             }
 
             // Build mind map data structure
@@ -423,12 +432,30 @@
                     const purchaser = cleanEntityName(row["Purchaser/Merger"]);
                     const leasee = cleanEntityName(row.Leasee);
                     
+                    // Get additional data from GeoJSON if available
+                    const geoJsonFeature = geoJsonByApn[warehouseId];
+                    let buildingClass = row["Building classification"] || "Warehouse";
+                    let yearBuilt = row["Year built/approved"];
+                    let acres = row.Acres || 0;
+                    let sqft = row["Building sq.ft."] || 0;
+                    
+                    if (geoJsonFeature && geoJsonFeature.properties) {
+                        buildingClass = geoJsonFeature.properties.class || buildingClass;
+                        yearBuilt = geoJsonFeature.properties.year_built || yearBuilt;
+                        if (geoJsonFeature.properties.shape_area) {
+                            // Convert shape_area to acres if needed (assuming it's in square feet)
+                            const calculatedAcres = (geoJsonFeature.properties.shape_area / 43560).toFixed(1);
+                            acres = acres || calculatedAcres;
+                        }
+                    }
+                    
                     const warehouseNode = {
                         name: warehouseId,
                         color: "#8B4513",
-                        details: `${row["Building classification"] || "Warehouse"} - ${row.Acres || 0} acres, ${(row["Building sq.ft."] || 0).toLocaleString()} sq.ft.`,
+                        details: `${buildingClass} - ${acres} acres, ${parseInt(sqft).toLocaleString()} sq.ft. (${yearBuilt})`,
                         type: "warehouse",
                         data: row,
+                        geoJsonFeature: geoJsonFeature,
                         children: []
                     };
 
@@ -507,27 +534,24 @@
                 const edges = [];
                 const nodeQueue = [{node: mindMapData, parent: null, level: 0}];
                 
-                // Process mind map structure breadth-first
                 while (nodeQueue.length > 0) {
                     const {node, parent, level} = nodeQueue.shift();
                     let nodeId = node.name;
                     
-                    // Create unique IDs for duplicate names
                     if (nodes[nodeId]) {
                         nodeId = `${node.name}_${Object.keys(nodes).filter(k => k.startsWith(node.name)).length}`;
                     }
                     
-                    // Get coordinates based on node type and level
                     let coords;
                     if (node.type === "root") {
                         coords = await geocodeLocation(node.name);
                     } else if (node.type === "warehouse") {
                         const warehouseIndex = mindMapData.children.indexOf(node);
-                        coords = getWarehousePosition(warehouseIndex, mindMapData.children.length);
+                        const apn = node.name;
+                        coords = getWarehousePositionFromGeoJson(apn, warehouseIndex, mindMapData.children.length);
                     } else if (node.type === "entity" && node.origin) {
                         coords = await getCoordinatesForEntity(node.origin, node.name);
                     } else {
-                        // Position relationship nodes near their warehouse
                         const parentCoords = parent ? nodes[parent].coords : [0, 0];
                         const offset = 0.05 * (level - 1);
                         const angle = Math.random() * 2 * Math.PI;
@@ -537,7 +561,6 @@
                         ];
                     }
                     
-                    // Create node
                     nodes[nodeId] = {
                         id: nodeId,
                         name: node.name,
@@ -548,10 +571,10 @@
                         coords: coords,
                         level: level,
                         data: node.data,
+                        geoJsonFeature: node.geoJsonFeature,
                         connections: 0
                     };
                     
-                    // Create edge from parent
                     if (parent) {
                         edges.push({
                             from: parent,
@@ -562,7 +585,6 @@
                         });
                     }
                     
-                    // Process children
                     if (node.children) {
                         node.children.forEach(child => {
                             nodeQueue.push({node: child, parent: nodeId, level: level + 1});
@@ -570,7 +592,6 @@
                     }
                 }
                 
-                // Count connections
                 edges.forEach(edge => {
                     if (nodes[edge.from]) nodes[edge.from].connections++;
                     if (nodes[edge.to]) nodes[edge.to].connections++;
@@ -582,25 +603,7 @@
             // Load and parse CSV data
             async function loadData() {
                 try {
-                    let csvText = csvData;
-                    
-                    // Try to load from GitHub if not using static data
-                    if (!useStaticData) {
-                        try {
-                            const response = await fetch(githubBaseUrl + "data/WarehouseTracker.csv");
-                            if (response.ok) {
-                                csvText = await response.text();
-                                console.log("Successfully loaded CSV from GitHub");
-                            } else {
-                                console.warn("Failed to load from GitHub, using embedded data");
-                            }
-                        } catch (error) {
-                            console.warn("Failed to fetch from GitHub, using embedded data:", error);
-                        }
-                    }
-                    
-                    // Fix header issue
-                    const lines = csvText.split('\n');
+                    const lines = csvData.split('\n');
                     const fixedHeader = "Category,Assessor parcel number,Building classification,Year built/approved,Acres,Building sq.ft.,Developer,DevOriginCity,Purchaser/Merger,Transaction Type,Leasee,PurchaserOriginCity,LeaseeOriginCity,Endpoint";
                     lines[0] = fixedHeader;
                     const fixedCsv = lines.join('\n');
@@ -611,13 +614,9 @@
                         skipEmptyLines: true
                     });
 
-                    // Build mind map structure
                     const mindMapData = buildMindMapData(parsed.data);
-                    
-                    // Convert to network visualization
                     const {nodes, edges} = await convertMindMapToNetwork(mindMapData);
                     
-                    // Calculate statistics
                     const warehouses = Object.values(nodes).filter(n => n.type === 'warehouse');
                     const stats = {
                         totalWarehouses: warehouses.length,
@@ -628,7 +627,7 @@
                         leasees: Object.values(nodes).filter(n => n.subtype === 'leasee').length
                     };
 
-                    console.log("Mind map data processing complete. Nodes:", Object.keys(nodes).length, "Edges:", edges.length);
+                    console.log("Data processing complete. Nodes:", Object.keys(nodes).length, "Edges:", edges.length);
                     return { nodes, edges, mindMapData, stats };
                 } catch (error) {
                     console.error("Error loading data:", error);
@@ -639,7 +638,6 @@
             // Initialize map and create network
             async function initializeMap() {
                 try {
-                    // Initialize map
                     const map = new Map({
                         basemap: "gray-vector"
                     });
@@ -647,21 +645,19 @@
                     const view = new MapView({
                         container: "viewDiv",
                         map: map,
-                        center: [-117.396, 34.070], // Bloomington, CA
+                        center: [-117.396, 34.070],
                         zoom: 11
                     });
 
-                    // Create graphics layers
                     const edgeLayer = new GraphicsLayer({ title: "Connections" });
                     const nodeLayer = new GraphicsLayer({ title: "Entities" });
                     const labelLayer = new GraphicsLayer({ title: "Labels" });
+                    const warehouseLayer = new GraphicsLayer({ title: "Warehouse Footprints" });
                     
-                    map.addMany([edgeLayer, nodeLayer, labelLayer]);
+                    map.addMany([warehouseLayer, edgeLayer, nodeLayer, labelLayer]);
 
-                    // Wait for view to be ready
                     await view.when();
 
-                    // Load and process data
                     const { nodes, edges, mindMapData, stats } = await loadData();
                     
                     // Update statistics panel
@@ -675,6 +671,46 @@
                             <strong>${stats.leasees}</strong> Leasees
                         </div>
                     `;
+                    
+                    // Add warehouse footprints from GeoJSON
+                    Object.values(nodes).forEach(node => {
+                        if (node.type === 'warehouse' && node.geoJsonFeature) {
+                            const feature = node.geoJsonFeature;
+                            if (feature.geometry.type === 'Polygon' || feature.geometry.type === 'MultiPolygon') {
+                                let rings;
+                                if (feature.geometry.type === 'MultiPolygon') {
+                                    // For MultiPolygon, use the first polygon
+                                    rings = feature.geometry.coordinates[0];
+                                } else {
+                                    rings = feature.geometry.coordinates;
+                                }
+                                
+                                const polygon = new Polygon({
+                                    rings: rings,
+                                    spatialReference: { wkid: 4326 }
+                                });
+                                
+                                const fillSymbol = new SimpleFillSymbol({
+                                    color: [139, 69, 19, 0.3], // Brown with transparency
+                                    outline: {
+                                        color: [139, 69, 19],
+                                        width: 2
+                                    }
+                                });
+                                
+                                const polygonGraphic = new Graphic({
+                                    geometry: polygon,
+                                    symbol: fillSymbol,
+                                    attributes: {
+                                        ...node,
+                                        warehouseData: feature.properties
+                                    }
+                                });
+                                
+                                warehouseLayer.add(polygonGraphic);
+                            }
+                        }
+                    });
                     
                     // Create edge graphics
                     edges.forEach(edge => {
@@ -742,7 +778,6 @@
                         let size = 10;
                         let color = hexToRgb(node.color || "#999999");
                         
-                        // Adjust size based on node type and level
                         if (node.type === "root") {
                             size = 24;
                         } else if (node.type === "warehouse") {
@@ -806,7 +841,7 @@
                     
                     // Update extent to show all graphics
                     if (nodeLayer.graphics.length > 0) {
-                        view.goTo(nodeLayer.graphics.concat(edgeLayer.graphics), {
+                        view.goTo(nodeLayer.graphics.concat(edgeLayer.graphics).concat(warehouseLayer.graphics), {
                             padding: { top: 50, bottom: 50, left: 50, right: 400 }
                         });
                     }
@@ -820,17 +855,24 @@
                                 let infoHtml = "";
                                 
                                 if (attrs.type === "root") {
-                                    // Root node clicked
                                     infoHtml = `<h4>${attrs.name}</h4>`;
                                     infoHtml += `<div class="warehouse-details">${attrs.details}</div>`;
                                     infoHtml += `<p><strong>Total Warehouses:</strong> ${mindMapData.children.length}</p>`;
                                     
                                 } else if (attrs.type === "warehouse") {
-                                    // Warehouse node clicked - show complete mind map branch
                                     const warehouseData = attrs.data;
                                     infoHtml = `<h4>Warehouse: ${attrs.id}</h4>`;
                                     infoHtml += `<div class="warehouse-details">`;
                                     infoHtml += `<div>${attrs.details}</div>`;
+                                    
+                                    // Add GeoJSON-based info if available
+                                    if (attrs.geoJsonFeature && attrs.geoJsonFeature.properties) {
+                                        const props = attrs.geoJsonFeature.properties;
+                                        if (props.shape_area) {
+                                            infoHtml += `<div><strong>Area:</strong> ${(props.shape_area / 43560).toFixed(1)} acres (${props.shape_area.toLocaleString()} sq.ft.)</div>`;
+                                        }
+                                    }
+                                    
                                     if (warehouseData?.Category) {
                                         infoHtml += `<div><strong>Status:</strong> ${warehouseData.Category}</div>`;
                                     }
@@ -864,13 +906,24 @@
                                         });
                                     }
                                     
+                                } else if (attrs.warehouseData) {
+                                    // Clicked on warehouse polygon
+                                    const props = attrs.warehouseData;
+                                    infoHtml = `<h4>Warehouse: ${props.apn}</h4>`;
+                                    infoHtml += `<div class="warehouse-details">`;
+                                    infoHtml += `<div><strong>Classification:</strong> ${props.class}</div>`;
+                                    infoHtml += `<div><strong>Year Built:</strong> ${props.year_built}</div>`;
+                                    infoHtml += `<div><strong>Category:</strong> ${props.category}</div>`;
+                                    if (props.shape_area) {
+                                        infoHtml += `<div><strong>Area:</strong> ${(props.shape_area / 43560).toFixed(1)} acres</div>`;
+                                    }
+                                    infoHtml += `</div>`;
+                                    
                                 } else if (attrs.type === "relationship") {
-                                    // Relationship node clicked
                                     infoHtml = `<h4>${attrs.name}</h4>`;
                                     infoHtml += `<p>${attrs.details}</p>`;
                                     
                                 } else if (attrs.type === "entity") {
-                                    // Entity node clicked
                                     infoHtml = `<h4>${attrs.name}</h4>`;
                                     infoHtml += `<p><strong>Type:</strong> ${attrs.subtype.charAt(0).toUpperCase() + attrs.subtype.slice(1)}</p>`;
                                     infoHtml += `<p>${attrs.details}</p>`;
@@ -879,7 +932,6 @@
                                     }
                                     
                                 } else if (attrs.from && attrs.to) {
-                                    // Edge clicked
                                     infoHtml = `<h4>Connection</h4>`;
                                     infoHtml += `<p><strong>From:</strong> ${attrs.from}</p>`;
                                     infoHtml += `<p><strong>To:</strong> ${attrs.to}</p>`;
@@ -891,15 +943,13 @@
                         });
                     });
                     
-                    // Add keyboard shortcuts for view control
+                    // Add keyboard shortcuts
                     view.on("key-down", function(event) {
                         if (event.key === "r" || event.key === "R") {
-                            // Reset view to show all
-                            view.goTo(nodeLayer.graphics.concat(edgeLayer.graphics), {
+                            view.goTo(nodeLayer.graphics.concat(edgeLayer.graphics).concat(warehouseLayer.graphics), {
                                 padding: { top: 50, bottom: 50, left: 50, right: 400 }
                             });
                         } else if (event.key === "c" || event.key === "C") {
-                            // Center on Bloomington
                             view.goTo({
                                 center: cityCoords["Bloomington, CA"],
                                 zoom: 11
@@ -936,4 +986,4 @@
         });
     </script>
 </body>
-</html> 
+</html>
