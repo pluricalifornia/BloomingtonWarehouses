@@ -133,10 +133,21 @@
             position: relative;
         }
         
-        #resetButton {
+        #controlPanel {
             position: absolute;
             top: 15px;
             left: 15px;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            z-index: 99;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        
+        .control-button {
             background: #3498db;
             color: white;
             border: none;
@@ -145,18 +156,44 @@
             cursor: pointer;
             font-size: 14px;
             box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-            z-index: 99;
+            transition: background 0.3s;
         }
         
-        #resetButton:hover {
+        .control-button:hover {
             background: #2980b9;
+        }
+        
+        .control-button.secondary {
+            background: #95a5a6;
+        }
+        
+        .control-button.secondary:hover {
+            background: #7f8c8d;
+        }
+        
+        .collapsed-indicator {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #e74c3c;
+            color: white;
+            font-size: 10px;
+            text-align: center;
+            line-height: 16px;
+            margin-left: 5px;
+            font-weight: bold;
         }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
     <script src="https://js.arcgis.com/4.27/"></script>
 </head>
 <body>
-    <button id="resetButton" onclick="resetCacheAndReload()">Reset Cache & Reload</button>
+    <div id="controlPanel">
+        <button class="control-button" onclick="resetCacheAndReload()">Reset Cache & Reload</button>
+        <button class="control-button secondary" onclick="expandAll()">Expand All</button>
+        <button class="control-button secondary" onclick="collapseAll()">Collapse All</button>
+    </div>
     <div id="viewDiv"></div>
     <div id="loadingDiv">
         <h3>Loading Network Map...</h3>
@@ -244,6 +281,15 @@
             timestamp: null
         };
         
+        // Global variables for expand/collapse functionality
+        let networkView = null;
+        let collapsedNodes = new Set();
+        let allNodes = {};
+        let allEdges = [];
+        let nodeLayer = null;
+        let edgeLayer = null;
+        let labelLayer = null;
+        
         // Function to reset cache and reload
         function resetCacheAndReload() {
             dataCache = {
@@ -253,6 +299,238 @@
             };
             console.log("Cache cleared. Reloading page...");
             location.reload();
+        }
+        
+        // Function to expand all nodes
+        function expandAll() {
+            collapsedNodes.clear();
+            updateNetworkVisualization();
+        }
+        
+        // Function to collapse all nodes
+        function collapseAll() {
+            // Collapse all warehouse nodes
+            Object.entries(allNodes).forEach(([nodeId, node]) => {
+                if (node.type === 'warehouse') {
+                    collapsedNodes.add(nodeId);
+                }
+            });
+            updateNetworkVisualization();
+        }
+        
+        // Function to toggle node expansion
+        function toggleNodeExpansion(nodeId) {
+            if (collapsedNodes.has(nodeId)) {
+                collapsedNodes.delete(nodeId);
+            } else {
+                collapsedNodes.add(nodeId);
+            }
+            updateNetworkVisualization();
+        }
+        
+        // Function to check if a node should be visible
+        function isNodeVisible(nodeId, nodes, edges) {
+            const node = nodes[nodeId];
+            if (!node) return false;
+            
+            // Root node is always visible
+            if (node.type === 'root') return true;
+            
+            // Check if any ancestor is collapsed
+            const ancestors = getNodeAncestors(nodeId, edges);
+            for (const ancestorId of ancestors) {
+                if (collapsedNodes.has(ancestorId)) {
+                    return false;
+                }
+            }
+            
+            return true;
+        }
+        
+        // Function to get all ancestors of a node
+        function getNodeAncestors(nodeId, edges) {
+            const ancestors = [];
+            let currentId = nodeId;
+            
+            while (currentId) {
+                const parentEdge = edges.find(e => e.to === currentId);
+                if (parentEdge) {
+                    ancestors.push(parentEdge.from);
+                    currentId = parentEdge.from;
+                } else {
+                    break;
+                }
+            }
+            
+            return ancestors;
+        }
+        
+        // Function to count collapsed children
+        function countCollapsedChildren(nodeId, nodes, edges) {
+            let count = 0;
+            const children = edges.filter(e => e.from === nodeId).map(e => e.to);
+            
+            children.forEach(childId => {
+                if (!isNodeVisible(childId, nodes, edges)) {
+                    count++;
+                }
+                // Recursively count collapsed grandchildren
+                count += countCollapsedChildren(childId, nodes, edges);
+            });
+            
+            return count;
+        }
+        
+        // Function to update network visualization based on collapsed state
+        function updateNetworkVisualization() {
+            if (!networkView || !nodeLayer || !edgeLayer || !labelLayer) return;
+            
+            // Clear existing graphics
+            nodeLayer.removeAll();
+            edgeLayer.removeAll();
+            labelLayer.removeAll();
+            
+            // Redraw edges (only visible ones)
+            allEdges.forEach(edge => {
+                const fromVisible = isNodeVisible(edge.from, allNodes, allEdges);
+                const toVisible = isNodeVisible(edge.to, allNodes, allEdges);
+                
+                if (fromVisible && toVisible) {
+                    const fromNode = allNodes[edge.from];
+                    const toNode = allNodes[edge.to];
+                    
+                    if (fromNode && toNode) {
+                        const polyline = new Polyline({
+                            paths: [[fromNode.coords, toNode.coords]],
+                            spatialReference: { wkid: 4326 }
+                        });
+                        
+                        let color, width, style;
+                        if (edge.type === "contains" && fromNode.type === "root") {
+                            color = [139, 69, 19, 0.8];
+                            width = 4;
+                            style = "solid";
+                        } else if (edge.type === "contains") {
+                            color = edge.color ? hexToRgba(edge.color, 0.6) : [149, 165, 166, 0.6];
+                            width = 2;
+                            style = "solid";
+                        } else if (edge.type === "developer") {
+                            color = [46, 134, 193, 0.8];
+                            width = 3;
+                            style = "solid";
+                        } else if (edge.type === "purchaser") {
+                            color = [231, 76, 60, 0.8];
+                            width = 3;
+                            style = "solid";
+                        } else if (edge.type === "leasee") {
+                            color = [243, 156, 18, 0.8];
+                            width = 3;
+                            style = "solid";
+                        } else {
+                            color = [149, 165, 166, 0.8];
+                            width = 2;
+                            style = "dash";
+                        }
+                        
+                        const lineSymbol = new SimpleLineSymbol({
+                            color: color,
+                            width: width,
+                            style: style
+                        });
+                        
+                        const graphic = new Graphic({
+                            geometry: polyline,
+                            symbol: lineSymbol,
+                            attributes: edge
+                        });
+                        
+                        edgeLayer.add(graphic);
+                    }
+                }
+            });
+            
+            // Redraw nodes (only visible ones)
+            Object.entries(allNodes).forEach(([nodeId, node]) => {
+                if (isNodeVisible(nodeId, allNodes, allEdges)) {
+                    const point = new Point({
+                        longitude: node.coords[0],
+                        latitude: node.coords[1],
+                        spatialReference: { wkid: 4326 }
+                    });
+                    
+                    let size = 10;
+                    let color = hexToRgb(node.color || "#999999");
+                    
+                    if (node.type === "root") {
+                        size = 24;
+                    } else if (node.type === "warehouse") {
+                        size = 16;
+                    } else if (node.type === "relationship") {
+                        size = 8;
+                    } else if (node.type === "entity") {
+                        size = 12 + Math.min(node.connections * 2, 8);
+                    }
+                    
+                    // Check if this node has collapsed children
+                    const collapsedChildCount = countCollapsedChildren(nodeId, allNodes, allEdges);
+                    const hasCollapsedChildren = collapsedNodes.has(nodeId) || collapsedChildCount > 0;
+                    
+                    const markerSymbol = new SimpleMarkerSymbol({
+                        color: color,
+                        size: size,
+                        outline: {
+                            color: hasCollapsedChildren ? [231, 76, 60] : [255, 255, 255],
+                            width: hasCollapsedChildren ? 3 : 2
+                        }
+                    });
+                    
+                    const graphic = new Graphic({
+                        geometry: point,
+                        symbol: markerSymbol,
+                        attributes: {
+                            ...node,
+                            nodeId: nodeId,
+                            collapsedChildCount: collapsedChildCount
+                        }
+                    });
+                    
+                    nodeLayer.add(graphic);
+                    
+                    // Add labels for important nodes
+                    if (node.type === "root" || node.type === "warehouse" || 
+                        (node.type === "entity" && node.connections > 0)) {
+                        let labelText = node.name;
+                        if (node.type === "warehouse") {
+                            labelText = node.id.length > 10 ? "WH" : node.id;
+                        }
+                        
+                        // Add collapsed indicator
+                        if (collapsedChildCount > 0) {
+                            labelText += ` (${collapsedChildCount})`;
+                        }
+                        
+                        const textSymbol = new TextSymbol({
+                            text: labelText,
+                            color: [0, 0, 0],
+                            haloColor: [255, 255, 255],
+                            haloSize: 2,
+                            font: {
+                                size: node.type === "root" ? 14 : 
+                                      (node.type === "warehouse" ? 9 : 10),
+                                weight: node.type === "root" ? "bold" : "normal"
+                            },
+                            yoffset: -15
+                        });
+                        
+                        const labelGraphic = new Graphic({
+                            geometry: point,
+                            symbol: textSymbol
+                        });
+                        
+                        labelLayer.add(labelGraphic);
+                    }
+                }
+            });
         }
         
         // Function to ensure APN format consistency (pad with zeros if needed)
@@ -789,17 +1067,24 @@
                         center: [-117.396, 34.070],
                         zoom: 11
                     });
+                    
+                    // Store view reference globally
+                    networkView = view;
 
                     const warehouseLayer = new GraphicsLayer({ title: "Warehouse Footprints" });
-                    const edgeLayer = new GraphicsLayer({ title: "Connections" });
-                    const nodeLayer = new GraphicsLayer({ title: "Entities" });
-                    const labelLayer = new GraphicsLayer({ title: "Labels" });
+                    edgeLayer = new GraphicsLayer({ title: "Connections" });
+                    nodeLayer = new GraphicsLayer({ title: "Entities" });
+                    labelLayer = new GraphicsLayer({ title: "Labels" });
                     
                     map.addMany([warehouseLayer, edgeLayer, nodeLayer, labelLayer]);
 
                     await view.when();
 
                     const { nodes, edges, mindMapData, stats, geoJsonByApn } = await loadData();
+                    
+                    // Store nodes and edges globally for expand/collapse functionality
+                    allNodes = nodes;
+                    allEdges = edges;
                     
                     // Update statistics panel
                     document.getElementById("statsSection").innerHTML = `
@@ -865,128 +1150,8 @@
                     });
                     console.log(`Added ${footprintCount} warehouse footprints`);
                     
-                    // Create edge graphics
-                    edges.forEach(edge => {
-                        const fromNode = nodes[edge.from];
-                        const toNode = nodes[edge.to];
-                        
-                        if (fromNode && toNode) {
-                            const polyline = new Polyline({
-                                paths: [[fromNode.coords, toNode.coords]],
-                                spatialReference: { wkid: 4326 }
-                            });
-                            
-                            let color, width, style;
-                            if (edge.type === "contains" && fromNode.type === "root") {
-                                color = [139, 69, 19, 0.8];
-                                width = 4;
-                                style = "solid";
-                            } else if (edge.type === "contains") {
-                                color = edge.color ? hexToRgba(edge.color, 0.6) : [149, 165, 166, 0.6];
-                                width = 2;
-                                style = "solid";
-                            } else if (edge.type === "developer") {
-                                color = [46, 134, 193, 0.8];
-                                width = 3;
-                                style = "solid";
-                            } else if (edge.type === "purchaser") {
-                                color = [231, 76, 60, 0.8];
-                                width = 3;
-                                style = "solid";
-                            } else if (edge.type === "leasee") {
-                                color = [243, 156, 18, 0.8];
-                                width = 3;
-                                style = "solid";
-                            } else {
-                                color = [149, 165, 166, 0.8];
-                                width = 2;
-                                style = "dash";
-                            }
-                            
-                            const lineSymbol = new SimpleLineSymbol({
-                                color: color,
-                                width: width,
-                                style: style
-                            });
-                            
-                            const graphic = new Graphic({
-                                geometry: polyline,
-                                symbol: lineSymbol,
-                                attributes: edge
-                            });
-                            
-                            edgeLayer.add(graphic);
-                        }
-                    });
-
-                    // Create node graphics
-                    Object.keys(nodes).forEach(nodeKey => {
-                        const node = nodes[nodeKey];
-                        const point = new Point({
-                            longitude: node.coords[0],
-                            latitude: node.coords[1],
-                            spatialReference: { wkid: 4326 }
-                        });
-                        
-                        let size = 10;
-                        let color = hexToRgb(node.color || "#999999");
-                        
-                        if (node.type === "root") {
-                            size = 24;
-                        } else if (node.type === "warehouse") {
-                            size = 16;
-                        } else if (node.type === "relationship") {
-                            size = 8;
-                        } else if (node.type === "entity") {
-                            size = 12 + Math.min(node.connections * 2, 8);
-                        }
-                        
-                        const markerSymbol = new SimpleMarkerSymbol({
-                            color: color,
-                            size: size,
-                            outline: {
-                                color: [255, 255, 255],
-                                width: 2
-                            }
-                        });
-                        
-                        const graphic = new Graphic({
-                            geometry: point,
-                            symbol: markerSymbol,
-                            attributes: node
-                        });
-                        
-                        nodeLayer.add(graphic);
-                        
-                        // Add labels for important nodes
-                        if (node.type === "root" || node.type === "warehouse" || 
-                            (node.type === "entity" && node.connections > 0)) {
-                            let labelText = node.name;
-                            if (node.type === "warehouse") {
-                                labelText = node.id.length > 10 ? "WH" : node.id;
-                            }
-                            
-                            const textSymbol = new TextSymbol({
-                                text: labelText,
-                                color: [0, 0, 0],
-                                haloColor: [255, 255, 255],
-                                haloSize: 2,
-                                font: {
-                                    size: node.type === "root" ? 14 : 
-                                          (node.type === "warehouse" ? 9 : 10),
-                                    weight: node.type === "root" ? "bold" : "normal"
-                                },
-                                yoffset: -15
-                            });
-                            
-                            const labelGraphic = new Graphic({
-                                geometry: point,
-                                symbol: textSymbol
-                            });
-                            
-                            labelLayer.add(labelGraphic);
-                        }
-                    });
+                    // Use updateNetworkVisualization instead of inline drawing
+                    updateNetworkVisualization();
                     
                     // Hide loading and show info panel
                     document.getElementById("loadingDiv").style.display = "none";
@@ -1115,6 +1280,15 @@
                                 }
                                 
                                 document.getElementById("nodeInfo").innerHTML = infoHtml || "<p>Click on nodes for details</p>";
+                                
+                                // Add expand/collapse functionality for expandable nodes
+                                if (attrs.nodeId && (attrs.type === 'warehouse' || attrs.type === 'root')) {
+                                    const isCollapsed = collapsedNodes.has(attrs.nodeId);
+                                    const toggleButton = `<button class="control-button secondary" style="margin-top: 10px; width: 100%;" onclick="toggleNodeExpansion('${attrs.nodeId}')">
+                                        ${isCollapsed ? 'Expand' : 'Collapse'} Node
+                                    </button>`;
+                                    document.getElementById("nodeInfo").innerHTML += toggleButton;
+                                }
                             }
                         });
                     });
@@ -1157,6 +1331,29 @@
                 return [...rgb, alpha];
             }
 
+            // Required imports for updateNetworkVisualization
+            const { Point, Polyline, Graphic, SimpleMarkerSymbol, SimpleLineSymbol, TextSymbol } = 
+                await new Promise(resolve => {
+                    require([
+                        "esri/geometry/Point",
+                        "esri/geometry/Polyline", 
+                        "esri/Graphic",
+                        "esri/symbols/SimpleMarkerSymbol",
+                        "esri/symbols/SimpleLineSymbol",
+                        "esri/symbols/TextSymbol"
+                    ], (Point, Polyline, Graphic, SimpleMarkerSymbol, SimpleLineSymbol, TextSymbol) => {
+                        resolve({ Point, Polyline, Graphic, SimpleMarkerSymbol, SimpleLineSymbol, TextSymbol });
+                    });
+                });
+            
+            // Store references globally for updateNetworkVisualization
+            window.Point = Point;
+            window.Polyline = Polyline;
+            window.Graphic = Graphic;
+            window.SimpleMarkerSymbol = SimpleMarkerSymbol;
+            window.SimpleLineSymbol = SimpleLineSymbol;
+            window.TextSymbol = TextSymbol;
+            
             // Start the application
             initializeMap();
         });
