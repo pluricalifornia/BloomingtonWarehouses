@@ -365,7 +365,7 @@
                 ];
             }
 
-            // Geocoding function
+            // Geocoding function with US bounds checking
             async function geocodeLocation(address) {
                 if (geocodeCache[address]) {
                     return geocodeCache[address];
@@ -382,27 +382,46 @@
                         address: {
                             SingleLine: address
                         },
-                        maxLocations: 1
+                        maxLocations: 1,
+                        countryCode: "USA" // Restrict to US
                     });
                     
                     if (result && result.length > 0) {
                         const coords = [result[0].location.longitude, result[0].location.latitude];
-                        geocodeCache[address] = coords;
-                        return coords;
+                        
+                        // Check if coordinates are within reasonable US bounds
+                        // Continental US: roughly -125 to -66 longitude, 24 to 49 latitude
+                        // Alaska: roughly -180 to -130 longitude, 52 to 72 latitude  
+                        // Hawaii: roughly -161 to -154 longitude, 18 to 23 latitude
+                        const lon = coords[0];
+                        const lat = coords[1];
+                        
+                        const isInContinentalUS = lon >= -125 && lon <= -66 && lat >= 24 && lat <= 49;
+                        const isInAlaska = lon >= -180 && lon <= -130 && lat >= 52 && lat <= 72;
+                        const isInHawaii = lon >= -161 && lon <= -154 && lat >= 18 && lat <= 23;
+                        
+                        if (isInContinentalUS || isInAlaska || isInHawaii) {
+                            geocodeCache[address] = coords;
+                            return coords;
+                        } else {
+                            console.warn(`Location ${address} geocoded outside US bounds:`, coords);
+                        }
                     }
                 } catch (error) {
                     console.warn(`Geocoding failed for ${address}:`, error);
                 }
                 
-                const defaultCoords = [-117.4 + (Math.random() - 0.5) * 2, 34.0 + (Math.random() - 0.5) * 2];
-                geocodeCache[address] = defaultCoords;
-                return defaultCoords;
+                // Return null instead of random coordinates for invalid locations
+                return null;
             }
 
             // Function to get coordinates with offset for multiple entities
             const entityOffsets = {};
             async function getCoordinatesForEntity(location, entityName) {
+                if (!location) return null;
+                
                 const baseCoords = await geocodeLocation(location);
+                if (!baseCoords) return null;
                 
                 const key = location + "|" + entityName;
                 if (!entityOffsets[key]) {
@@ -423,8 +442,13 @@
                 
                 let cleaned = location.trim().replace(/["\\"]/g, '').trim();
                 
-                const invalidLocations = ['TBD', 'TBA', 'N/A', 'CA', 'TX', 'Florida', 'Unknown', ''];
+                // Expanded list of invalid locations
+                const invalidLocations = ['TBD', 'TBA', 'N/A', 'CA', 'TX', 'FL', 'NY', 'AZ', 'CO', 'MD', 
+                    'Florida', 'Texas', 'California', 'Unknown', '', 'undefined', 'null'];
                 if (invalidLocations.includes(cleaned)) return null;
+                
+                // Check if it's just a state abbreviation (2 letters)
+                if (/^[A-Z]{2}$/.test(cleaned)) return null;
                 
                 if (cleaned === 'Bethseda, MD') cleaned = 'Bethesda, MD';
                 
@@ -445,8 +469,13 @@
                 
                 let cleaned = name.trim().replace(/["\\"]/g, '').trim();
                 
-                const invalidNames = ['TBD', 'TBA', 'N/A', 'Purchase', 'Merger', ''];
+                // Expanded list of invalid names - including transaction types
+                const invalidNames = ['TBD', 'TBA', 'N/A', 'Purchase', 'Merger', 'Acquisition', 
+                    'Joint Venture', 'Partnership', 'Category', '', 'undefined', 'null'];
                 if (invalidNames.includes(cleaned)) return null;
+                
+                // Check if it's just a state abbreviation
+                if (/^[A-Z]{2}$/.test(cleaned)) return null;
                 
                 return cleaned;
             }
@@ -502,64 +531,78 @@
                     // Add developer branch
                     if (developer) {
                         const devOrigin = cleanLocation(row.DevOriginCity);
-                        warehouseNode.children.push({
-                            name: "Developer",
-                            color: "#2E86C1",
-                            details: developer,
-                            type: "relationship",
-                            children: [
-                                {
-                                    name: developer,
-                                    color: "#2E86C1",
-                                    details: `Headquarters: ${devOrigin || "Unknown"}`,
-                                    type: "entity",
-                                    subtype: "developer",
-                                    origin: devOrigin
-                                }
-                            ]
-                        });
+                        // Only add if we have valid origin location
+                        if (devOrigin) {
+                            warehouseNode.children.push({
+                                name: "Developer",
+                                color: "#2E86C1",
+                                details: developer,
+                                type: "relationship",
+                                children: [
+                                    {
+                                        name: developer,
+                                        color: "#2E86C1",
+                                        details: `Headquarters: ${devOrigin}`,
+                                        type: "entity",
+                                        subtype: "developer",
+                                        origin: devOrigin
+                                    }
+                                ]
+                            });
+                        }
                     }
 
                     // Add purchaser branch
                     if (purchaser) {
                         const purchOrigin = cleanLocation(row.PurchaserOriginCity);
-                        warehouseNode.children.push({
-                            name: "Purchaser/Owner",
-                            color: "#E74C3C",
-                            details: `${row["Transaction Type"] || "Purchase"}: ${purchaser}`,
-                            type: "relationship",
-                            children: [
-                                {
-                                    name: purchaser,
-                                    color: "#E74C3C",
-                                    details: `Headquarters: ${purchOrigin || "Unknown"}`,
-                                    type: "entity",
-                                    subtype: "purchaser",
-                                    origin: purchOrigin
-                                }
-                            ]
-                        });
+                        // Validate transaction type
+                        const transactionType = row["Transaction Type"];
+                        const validTransactionTypes = ['Purchase', 'Merger', 'Acquisition', 'Joint Venture'];
+                        const cleanTransactionType = validTransactionTypes.includes(transactionType) ? transactionType : "Purchase";
+                        
+                        // Only add if we have valid origin location
+                        if (purchOrigin) {
+                            warehouseNode.children.push({
+                                name: "Purchaser/Owner",
+                                color: "#E74C3C",
+                                details: `${cleanTransactionType}: ${purchaser}`,
+                                type: "relationship",
+                                children: [
+                                    {
+                                        name: purchaser,
+                                        color: "#E74C3C",
+                                        details: `Headquarters: ${purchOrigin}`,
+                                        type: "entity",
+                                        subtype: "purchaser",
+                                        origin: purchOrigin
+                                    }
+                                ]
+                            });
+                        }
                     }
 
                     // Add leasee branch
                     if (leasee) {
                         const leaseeOrigin = cleanLocation(row.LeaseeOriginCity);
-                        warehouseNode.children.push({
-                            name: "Tenant",
-                            color: "#F39C12",
-                            details: `Leased to: ${leasee}`,
-                            type: "relationship",
-                            children: [
-                                {
-                                    name: leasee,
-                                    color: "#F39C12",
-                                    details: `Headquarters: ${leaseeOrigin || "Unknown"}`,
-                                    type: "entity",
-                                    subtype: "leasee",
-                                    origin: leaseeOrigin
-                                }
-                            ]
-                        });
+                        // Only add if we have valid origin location
+                        if (leaseeOrigin) {
+                            warehouseNode.children.push({
+                                name: "Tenant",
+                                color: "#F39C12",
+                                details: `Leased to: ${leasee}`,
+                                type: "relationship",
+                                children: [
+                                    {
+                                        name: leasee,
+                                        color: "#F39C12",
+                                        details: `Headquarters: ${leaseeOrigin}`,
+                                        type: "entity",
+                                        subtype: "leasee",
+                                        origin: leaseeOrigin
+                                    }
+                                ]
+                            });
+                        }
                     }
 
                     mindMapData.children.push(warehouseNode);
@@ -591,6 +634,11 @@
                         coords = getWarehousePositionFromGeoJson(apn, geoJsonByApn, warehouseIndex, mindMapData.children.length);
                     } else if (node.type === "entity" && node.origin) {
                         coords = await getCoordinatesForEntity(node.origin, node.name);
+                        // Skip this node if we couldn't get valid coordinates
+                        if (!coords) {
+                            console.warn(`Skipping entity node ${node.name} - no valid coordinates for ${node.origin}`);
+                            continue;
+                        }
                     } else {
                         const parentCoords = parent ? nodes[parent].coords : [0, 0];
                         const offset = 0.05 * (level - 1);
