@@ -133,20 +133,30 @@
             position: relative;
         }
         
-        .tree-node::before {
-            content: "";
+        #resetButton {
             position: absolute;
-            left: -12px;
-            top: 10px;
-            width: 10px;
-            height: 1px;
-            background: #ddd;
+            top: 15px;
+            left: 15px;
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            z-index: 99;
+        }
+        
+        #resetButton:hover {
+            background: #2980b9;
         }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
     <script src="https://js.arcgis.com/4.27/"></script>
 </head>
 <body>
+    <button id="resetButton" onclick="resetCacheAndReload()">Reset Cache & Reload</button>
     <div id="viewDiv"></div>
     <div id="loadingDiv">
         <h3>Loading Network Map...</h3>
@@ -227,6 +237,39 @@
         const csvUrl = githubBaseUrl + "data/WarehouseTracker.csv";
         const geoJsonUrl = githubBaseUrl + "data/warehouses%20(1).geojson";
         
+        // Cache management
+        let dataCache = {
+            csv: null,
+            geoJson: null,
+            timestamp: null
+        };
+        
+        // Function to reset cache and reload
+        function resetCacheAndReload() {
+            dataCache = {
+                csv: null,
+                geoJson: null,
+                timestamp: null
+            };
+            console.log("Cache cleared. Reloading page...");
+            location.reload();
+        }
+        
+        // Function to ensure APN format consistency (pad with zeros if needed)
+        function normalizeAPN(apn) {
+            if (!apn) return apn;
+            
+            // Convert to string to handle any numeric values
+            let apnStr = String(apn).trim();
+            
+            // If it looks like a numeric APN (all digits), pad with zeros to 9 digits
+            if (/^\d+$/.test(apnStr) && apnStr.length < 9) {
+                apnStr = apnStr.padStart(9, '0');
+            }
+            
+            return apnStr;
+        }
+        
         // Fallback embedded data for testing
         const fallbackCsvData = `"Category","Assessor parcel number","Building classification","Year built/approved","Acres","Building sq.ft.",Developer,DevOriginCity,Purchaser/Merger,Category,Leasee,PurchaserOriginCity,LeaseeOriginCity,Endpoint
 "Approved","Bloomington Business Park","https://ceqanet.opr.ca.gov/2020120545/3","2025","181","4340000",Howard Industrial Partners LLC,"Lemon Heights, CA",TBD,TBD,TBD,TBD,TBD,"Bloomington, CA"
@@ -303,7 +346,10 @@
 
             // Get warehouse position from GeoJSON or generate one
             function getWarehousePositionFromGeoJson(apn, geoJsonByApn, index, total) {
-                const feature = geoJsonByApn[apn];
+                // Try normalized APN first, then raw APN
+                const normalizedApn = normalizeAPN(apn);
+                const feature = geoJsonByApn[normalizedApn] || geoJsonByApn[apn];
+                
                 if (feature && feature.geometry) {
                     return getPolygonCentroid(feature.geometry.coordinates);
                 }
@@ -416,19 +462,22 @@
                 };
 
                 parsedData.forEach((row, index) => {
-                    const warehouseId = row["Assessor parcel number"] || `Warehouse_${index}`;
+                    const rawApn = row["Assessor parcel number"];
+                    const warehouseId = normalizeAPN(rawApn) || `Warehouse_${index}`;
                     const developer = cleanEntityName(row.Developer);
                     const purchaser = cleanEntityName(row["Purchaser/Merger"]);
                     const leasee = cleanEntityName(row.Leasee);
                     
                     // Get additional data from GeoJSON if available
-                    const geoJsonFeature = geoJsonByApn[warehouseId];
+                    // Try normalized APN first, then raw APN
+                    const geoJsonFeature = geoJsonByApn[warehouseId] || geoJsonByApn[rawApn];
                     let buildingClass = row["Building classification"] || "Warehouse";
                     let yearBuilt = row["Year built/approved"];
                     let acres = row.Acres || 0;
                     let sqft = row["Building sq.ft."] || 0;
                     
                     if (geoJsonFeature && geoJsonFeature.properties) {
+                        console.log(`Found GeoJSON match for ${warehouseId}`);
                         buildingClass = geoJsonFeature.properties.class || buildingClass;
                         yearBuilt = geoJsonFeature.properties.year_built || yearBuilt;
                         if (geoJsonFeature.properties.shape_area) {
@@ -436,6 +485,8 @@
                             const calculatedAcres = (geoJsonFeature.properties.shape_area / 43560).toFixed(1);
                             acres = acres || calculatedAcres;
                         }
+                    } else {
+                        console.log(`No GeoJSON match found for ${warehouseId} (raw: ${rawApn})`);
                     }
                     
                     const warehouseNode = {
@@ -628,6 +679,9 @@
                     if (geoJsonData && geoJsonData.features) {
                         geoJsonData.features.forEach(feature => {
                             if (feature.properties && feature.properties.apn) {
+                                const normalizedApn = normalizeAPN(feature.properties.apn);
+                                geoJsonByApn[normalizedApn] = feature;
+                                // Also store with original APN in case
                                 geoJsonByApn[feature.properties.apn] = feature;
                             }
                         });
@@ -642,7 +696,13 @@
                     
                     const parsed = Papa.parse(fixedCsv, {
                         header: true,
-                        dynamicTyping: true,
+                        dynamicTyping: function (header) {
+                            // Don't dynamically type the APN field to preserve leading zeros
+                            if (header === "Assessor parcel number") {
+                                return false;
+                            }
+                            return true;
+                        },
                         skipEmptyLines: true
                     });
 
@@ -965,9 +1025,12 @@
                                     infoHtml += `</div>`;
                                     
                                     // Try to find corresponding node data
-                                    const warehouseNode = Object.values(nodes).find(n => 
-                                        n.type === 'warehouse' && (n.name === props.apn || n.id === props.apn)
-                                    );
+                                    const warehouseNode = Object.values(nodes).find(n => {
+                                        if (n.type !== 'warehouse') return false;
+                                        const nodeApn = normalizeAPN(n.name);
+                                        const propsApn = normalizeAPN(props.apn);
+                                        return nodeApn === propsApn || n.name === props.apn || n.id === props.apn;
+                                    });
                                     
                                     if (warehouseNode && warehouseNode.data) {
                                         const warehouseData = warehouseNode.data;
