@@ -281,6 +281,22 @@
             timestamp: null
         };
         
+        // Helper function to convert hex to RGB
+        function hexToRgb(hex) {
+            const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            return result ? [
+                parseInt(result[1], 16),
+                parseInt(result[2], 16),
+                parseInt(result[3], 16)
+            ] : [128, 128, 128];
+        }
+        
+        // Helper function to convert hex to RGBA
+        function hexToRgba(hex, alpha) {
+            const rgb = hexToRgb(hex);
+            return [...rgb, alpha];
+        }
+        
         // Global variables for expand/collapse functionality
         let networkView = null;
         let collapsedNodes = new Set();
@@ -1321,22 +1337,6 @@
                     document.getElementById("errorDiv").style.display = "block";
                     document.getElementById("errorMessage").textContent = error.message;
                 }
-            }
-            
-            // Helper function to convert hex to RGB
-            function hexToRgb(hex) {
-                const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-                return result ? [
-                    parseInt(result[1], 16),
-                    parseInt(result[2], 16),
-                    parseInt(result[3], 16)
-                ] : [128, 128, 128];
-            }
-            
-            // Helper function to convert hex to RGBA
-            function hexToRgba(hex, alpha) {
-                const rgb = hexToRgb(hex);
-                return [...rgb, alpha];
             }
 
             // Start the application
