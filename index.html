@@ -383,7 +383,9 @@
         
         // Function to update network visualization based on collapsed state
         function updateNetworkVisualization() {
-            if (!networkView || !nodeLayer || !edgeLayer || !labelLayer) return;
+            if (!networkView || !nodeLayer || !edgeLayer || !labelLayer || !window.ArcGISModules) return;
+            
+            const { Point, Polyline, Graphic, SimpleMarkerSymbol, SimpleLineSymbol, TextSymbol } = window.ArcGISModules;
             
             // Clear existing graphics
             nodeLayer.removeAll();
@@ -571,6 +573,11 @@
             "esri/widgets/Popup"
         ], function(Map, MapView, Graphic, GraphicsLayer, Point, Polygon, Polyline, 
                    SimpleMarkerSymbol, SimpleFillSymbol, SimpleLineSymbol, TextSymbol, locator, Popup) {
+
+            // Store modules globally for use outside require block
+            window.ArcGISModules = {
+                Point, Polyline, Graphic, SimpleMarkerSymbol, SimpleLineSymbol, TextSymbol
+            };
 
             // Cache for geocoded locations
             const geocodeCache = {};
@@ -1162,13 +1169,7 @@
                         view.goTo(nodeLayer.graphics.concat(edgeLayer.graphics).concat(warehouseLayer.graphics), {
                             padding: { top: 50, bottom: 50, left: 50, right: 400 }
                         });
-                        // Store references globally for updateNetworkVisualization
-                        window.Point = Point;
-                        window.Polyline = Polyline;
-                        window.Graphic = Graphic;
-                        window.SimpleMarkerSymbol = SimpleMarkerSymbol;
-                        window.SimpleLineSymbol = SimpleLineSymbol;
-                        window.TextSymbol = TextSymbol;
+                        // Store references globally for updateNetworkVisualization (already done at top)
                     }
                     
                     // Handle click events
