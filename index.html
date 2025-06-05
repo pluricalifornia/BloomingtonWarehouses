@@ -1162,6 +1162,13 @@
                         view.goTo(nodeLayer.graphics.concat(edgeLayer.graphics).concat(warehouseLayer.graphics), {
                             padding: { top: 50, bottom: 50, left: 50, right: 400 }
                         });
+                        // Store references globally for updateNetworkVisualization
+                        window.Point = Point;
+                        window.Polyline = Polyline;
+                        window.Graphic = Graphic;
+                        window.SimpleMarkerSymbol = SimpleMarkerSymbol;
+                        window.SimpleLineSymbol = SimpleLineSymbol;
+                        window.TextSymbol = TextSymbol;
                     }
                     
                     // Handle click events
@@ -1331,29 +1338,6 @@
                 return [...rgb, alpha];
             }
 
-            // Required imports for updateNetworkVisualization
-            const { Point, Polyline, Graphic, SimpleMarkerSymbol, SimpleLineSymbol, TextSymbol } = 
-                await new Promise(resolve => {
-                    require([
-                        "esri/geometry/Point",
-                        "esri/geometry/Polyline", 
-                        "esri/Graphic",
-                        "esri/symbols/SimpleMarkerSymbol",
-                        "esri/symbols/SimpleLineSymbol",
-                        "esri/symbols/TextSymbol"
-                    ], (Point, Polyline, Graphic, SimpleMarkerSymbol, SimpleLineSymbol, TextSymbol) => {
-                        resolve({ Point, Polyline, Graphic, SimpleMarkerSymbol, SimpleLineSymbol, TextSymbol });
-                    });
-                });
-            
-            // Store references globally for updateNetworkVisualization
-            window.Point = Point;
-            window.Polyline = Polyline;
-            window.Graphic = Graphic;
-            window.SimpleMarkerSymbol = SimpleMarkerSymbol;
-            window.SimpleLineSymbol = SimpleLineSymbol;
-            window.TextSymbol = TextSymbol;
-            
             // Start the application
             initializeMap();
         });
