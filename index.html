@@ -334,8 +334,8 @@
             updateNetworkVisualization();
         }
         
-        // Function to toggle node expansion
-        function toggleNodeExpansion(nodeId) {
+        // Function to toggle node expansion (make it global)
+        window.toggleNodeExpansion = function(nodeId) {
             if (collapsedNodes.has(nodeId)) {
                 collapsedNodes.delete(nodeId);
             } else {
@@ -379,6 +379,16 @@
             }
             
             return ancestors;
+        }
+        
+        // Function to check if a node has children
+        function hasChildNodes(nodeId) {
+            return allEdges.some(edge => edge.from === nodeId);
+        }
+        
+        // Function to count direct children of a node
+        function countDirectChildren(nodeId) {
+            return allEdges.filter(edge => edge.from === nodeId).length;
         }
         
         // Function to count collapsed children
@@ -1196,10 +1206,14 @@
                                 const attrs = graphic.attributes;
                                 let infoHtml = "";
                                 
+                                // Store nodeId for expand/collapse functionality
+                                let currentNodeId = attrs.nodeId || attrs.id || attrs.name;
+                                
                                 if (attrs.type === "root") {
                                     infoHtml = `<h4>${attrs.name}</h4>`;
                                     infoHtml += `<div class="warehouse-details">${attrs.details}</div>`;
                                     infoHtml += `<p><strong>Total Warehouses:</strong> ${mindMapData.children.length}</p>`;
+                                    currentNodeId = attrs.id || "Bloomington, CA";
                                     
                                 } else if (attrs.type === "warehouse") {
                                     const warehouseData = attrs.data;
@@ -1222,6 +1236,9 @@
                                         infoHtml += `<div><strong>Year:</strong> ${warehouseData["Year built/approved"]}</div>`;
                                     }
                                     infoHtml += `</div>`;
+                                    
+                                    // Make sure we have the right nodeId
+                                    currentNodeId = attrs.nodeId || attrs.id || attrs.name;
                                     
                                     // Find and display the mind map branch for this warehouse
                                     const warehouseBranch = mindMapData.children.find(w => 
@@ -1287,6 +1304,7 @@
                                 } else if (attrs.type === "relationship") {
                                     infoHtml = `<h4>${attrs.name}</h4>`;
                                     infoHtml += `<p>${attrs.details}</p>`;
+                                    currentNodeId = attrs.nodeId || attrs.id || attrs.name;
                                     
                                 } else if (attrs.type === "entity") {
                                     infoHtml = `<h4>${attrs.name}</h4>`;
@@ -1295,6 +1313,7 @@
                                     if (attrs.connections > 0) {
                                         infoHtml += `<p><strong>Connections:</strong> ${attrs.connections}</p>`;
                                     }
+                                    currentNodeId = attrs.nodeId || attrs.id || attrs.name;
                                     
                                 } else if (attrs.from && attrs.to) {
                                     infoHtml = `<h4>Connection</h4>`;
@@ -1306,12 +1325,17 @@
                                 document.getElementById("nodeInfo").innerHTML = infoHtml || "<p>Click on nodes for details</p>";
                                 
                                 // Add expand/collapse functionality for expandable nodes
-                                if (attrs.nodeId && (attrs.type === 'warehouse' || attrs.type === 'root')) {
-                                    const isCollapsed = collapsedNodes.has(attrs.nodeId);
-                                    const toggleButton = `<button class="control-button secondary" style="margin-top: 10px; width: 100%;" onclick="toggleNodeExpansion('${attrs.nodeId}')">
-                                        ${isCollapsed ? 'Expand' : 'Collapse'} Node
-                                    </button>`;
-                                    document.getElementById("nodeInfo").innerHTML += toggleButton;
+                                if (currentNodeId && (attrs.type === 'warehouse' || attrs.type === 'root' || 
+                                    (attrs.type === 'entity' && hasChildNodes(currentNodeId)))) {
+                                    const isCollapsed = collapsedNodes.has(currentNodeId);
+                                    const childCount = countDirectChildren(currentNodeId);
+                                    
+                                    if (childCount > 0) {
+                                        const toggleButton = `<button class="control-button secondary" style="margin-top: 10px; width: 100%;" onclick="window.toggleNodeExpansion('${currentNodeId}')">
+                                            ${isCollapsed ? '➕ Expand' : '➖ Collapse'} Node (${childCount} direct children)
+                                        </button>`;
+                                        document.getElementById("nodeInfo").innerHTML += toggleButton;
+                                    }
                                 }
                             }
                         });
