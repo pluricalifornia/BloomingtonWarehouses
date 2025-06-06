@@ -1204,10 +1204,37 @@
                             const graphic = response.results[0]?.graphic;
                             if (graphic && graphic.attributes) {
                                 const attrs = graphic.attributes;
-                                let infoHtml = "";
                                 
-                                // Store nodeId for expand/collapse functionality
-                                let currentNodeId = attrs.nodeId || attrs.id || attrs.name;
+                                // Check if this is a node click (not warehouse polygon)
+                                if (attrs.nodeId && (attrs.type === 'warehouse' || attrs.type === 'root' || 
+                                    (attrs.type === 'entity' && hasChildNodes(attrs.nodeId)))) {
+                                    
+                                    // Check if shift key is held for info display
+                                    if (event.native.shiftKey) {
+                                        // Show info panel
+                                        displayNodeInfo(attrs, mindMapData);
+                                    } else {
+                                        // Toggle expansion on direct click
+                                        const childCount = countDirectChildren(attrs.nodeId);
+                                        if (childCount > 0) {
+                                            window.toggleNodeExpansion(attrs.nodeId);
+                                        } else {
+                                            // If no children, show info
+                                            displayNodeInfo(attrs, mindMapData);
+                                        }
+                                    }
+                                } else {
+                                    // For non-expandable nodes or polygons, show info
+                                    displayNodeInfo(attrs, mindMapData);
+                                }
+                            }
+                        });
+                    });
+                    
+                    // Function to display node information
+                    function displayNodeInfo(attrs, mindMapData) {
+                        let infoHtml = "";
+                        let currentNodeId = attrs.nodeId || attrs.id || attrs.name;
                                 
                                 if (attrs.type === "root") {
                                     infoHtml = `<h4>${attrs.name}</h4>`;
