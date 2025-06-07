@@ -308,8 +308,8 @@
         let edgeLayer = null;
         let labelLayer = null;
         
-        // Function to reset cache and reload
-        function resetCacheAndReload() {
+        // Function to reset cache and reload (make it global)
+        window.resetCacheAndReload = function() {
             dataCache = {
                 csv: null,
                 geoJson: null,
@@ -319,14 +319,14 @@
             location.reload();
         }
         
-        // Function to expand all nodes
-        function expandAll() {
+        // Function to expand all nodes (make it global)
+        window.expandAll = function() {
             collapsedNodes.clear();
             updateNetworkVisualization();
         }
         
-        // Function to collapse all nodes
-        function collapseAll() {
+        // Function to collapse all nodes (make it global)
+        window.collapseAll = function() {
             // Collapse all warehouse nodes
             Object.entries(allNodes).forEach(([nodeId, node]) => {
                 if (node.type === 'warehouse') {
