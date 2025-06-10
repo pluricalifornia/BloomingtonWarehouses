@@ -403,29 +403,30 @@
             return [...rgb, alpha];
         }
         
-        // Calculate pollution export based on distance and entity type
-        function calculatePollutionExport(entityType, distanceFromBloomington, warehouseCount = 1) {
-            // Base pollution multiplier based on entity type
+        // Calculate pollution export based on warehouse square footage and entity responsibility
+        function calculatePollutionExport(entityType, warehouseSqft, totalSqft, entityWarehouseData) {
+            // Calculate the proportion of total warehouse space this entity is responsible for
+            const sqftProportion = warehouseSqft / totalSqft;
+            
+            // Base responsibility multiplier based on entity type
             const typeMultipliers = {
-                'developer': 0.3, // Developers contribute to initial pollution setup
-                'purchaser': 0.5, // Purchasers/owners have ongoing responsibility
-                'leasee': 0.2    // Leasees have operational impact
+                'developer': 0.3, // Developers contribute to initial infrastructure
+                'purchaser': 0.6, // Purchasers/owners have primary responsibility 
+                'leasee': 0.1    // Leasees have operational impact
             };
             
-            const baseMultiplier = typeMultipliers[entityType] || 0.3;
+            const responsibilityMultiplier = typeMultipliers[entityType] || 0.3;
             
-            // Distance decay - closer entities export more pollution per mile
-            const distanceKm = distanceFromBloomington * 1.60934; // Convert miles to km
-            const distanceMultiplier = Math.max(0.1, 1 / (1 + distanceKm / 100)); // Decay over distance
-            
-            // Calculate exported pollution
-            const exportMultiplier = baseMultiplier * distanceMultiplier * warehouseCount;
+            // Calculate this entity's share of total pollution based on their warehouse sqft
+            const pollutionShare = sqftProportion * responsibilityMultiplier;
             
             return {
-                truckTrips: Math.round(pollutionData.dailyTruckTrips * exportMultiplier),
-                dieselPM: (pollutionData.dailyDieselPM * exportMultiplier).toFixed(2),
-                nox: Math.round(pollutionData.dailyNOx * exportMultiplier),
-                co2: (pollutionData.dailyCO2 * exportMultiplier).toFixed(1)
+                truckTrips: Math.round(pollutionData.dailyTruckTrips * pollutionShare),
+                dieselPM: parseFloat((pollutionData.dailyDieselPM * pollutionShare).toFixed(2)),
+                nox: Math.round(pollutionData.dailyNOx * pollutionShare),
+                co2: parseFloat((pollutionData.dailyCO2 * pollutionShare).toFixed(1)),
+                sqftProportion: (sqftProportion * 100).toFixed(1),
+                warehouseSqft: warehouseSqft.toLocaleString()
             };
         }
         
@@ -447,7 +448,7 @@
             updateNetworkVisualization();
         }
         
-        // Function to reset cache and reload (make it global)
+        // Function to reset cache and reload
         window.resetCacheAndReload = function() {
             dataCache = {
                 csv: null,
@@ -458,15 +459,14 @@
             location.reload();
         }
         
-        // Function to expand all nodes (make it global)
+        // Function to expand all nodes
         window.expandAll = function() {
             collapsedNodes.clear();
             updateNetworkVisualization();
         }
         
-        // Function to collapse all nodes (make it global)
+        // Function to collapse all nodes
         window.collapseAll = function() {
-            // Collapse all warehouse nodes
             Object.entries(allNodes).forEach(([nodeId, node]) => {
                 if (node.type === 'warehouse') {
                     collapsedNodes.add(nodeId);
@@ -475,7 +475,7 @@
             updateNetworkVisualization();
         }
         
-        // Function to toggle node expansion (make it global)
+        // Function to toggle node expansion
         window.toggleNodeExpansion = function(nodeId) {
             if (collapsedNodes.has(nodeId)) {
                 collapsedNodes.delete(nodeId);
@@ -490,10 +490,8 @@
             const node = nodes[nodeId];
             if (!node) return false;
             
-            // Root node is always visible
             if (node.type === 'root') return true;
             
-            // Check if any ancestor is collapsed
             const ancestors = getNodeAncestors(nodeId, edges);
             for (const ancestorId of ancestors) {
                 if (collapsedNodes.has(ancestorId)) {
@@ -541,7 +539,6 @@
                 if (!isNodeVisible(childId, nodes, edges)) {
                     count++;
                 }
-                // Recursively count collapsed grandchildren
                 count += countCollapsedChildren(childId, nodes, edges);
             });
             
@@ -554,7 +551,6 @@
             
             const { Point, Polyline, Graphic, SimpleMarkerSymbol, SimpleLineSymbol, TextSymbol } = window.ArcGISModules;
             
-            // Clear existing graphics
             nodeLayer.removeAll();
             edgeLayer.removeAll();
             labelLayer.removeAll();
@@ -579,18 +575,14 @@
                         
                         let color, width, style;
                         
-                        // Special pollution flow visualization
                         if (showPollutionView && toNode.type === "root" && fromNode.type === "entity") {
-                            // This represents pollution flowing TO Bloomington FROM external entities
                             const distance = calculateDistance(fromNode.coords, bloomingtonCoords);
-                            const pollutionAmount = calculatePollutionExport(fromNode.subtype, distance);
+                            const pollutionAmount = fromNode.pollutionExport || {};
                             
-                            // Make pollution flows more visible - thicker, red, pulsing
-                            color = [231, 76, 60, 0.9]; // Bright red
-                            width = Math.max(3, Math.min(8, pollutionAmount.truckTrips / 50)); // Width based on truck trips
+                            color = [231, 76, 60, 0.9];
+                            width = Math.max(3, Math.min(8, (pollutionAmount.truckTrips || 0) / 50));
                             style = "solid";
                             
-                            // Add pollution data to edge attributes
                             edge.pollutionExport = pollutionAmount;
                             edge.distance = distance.toFixed(1);
                         } else if (edge.type === "contains" && fromNode.type === "root") {
@@ -651,28 +643,30 @@
                     
                     if (node.type === "root") {
                         size = showPollutionView ? 28 : 24;
-                        color = showPollutionView ? [231, 76, 60] : hexToRgb(node.color); // Red for pollution sink
+                        color = showPollutionView ? [231, 76, 60] : hexToRgb(node.color);
                         outline = { color: [128, 0, 0], width: 3 };
                     } else if (node.type === "warehouse") {
                         size = 16;
                     } else if (node.type === "relationship") {
                         size = 8;
                     } else if (node.type === "entity") {
-                        // Calculate pollution impact for external entities
-                        if (showPollutionView && node.subtype) {
-                            const distance = calculateDistance(node.coords, bloomingtonCoords);
-                            const pollutionAmount = calculatePollutionExport(node.subtype, distance);
+                        if (showPollutionView && node.subtype && node.pollutionExport) {
+                            const pollutionAmount = node.pollutionExport;
                             
-                            // Size based on pollution export - bigger = more pollution
                             size = 12 + Math.min(node.connections * 2, 8) + (pollutionAmount.truckTrips / 100);
                             
-                            // Color coding for pollution exporters
-                            if (pollutionAmount.truckTrips > 100) {
-                                color = [220, 53, 69]; // High pollution - dark red
+                            if (pollutionAmount.truckTrips > 200) {
+                                color = [139, 0, 0];
+                                outline = { color: [69, 0, 0], width: 3 };
+                            } else if (pollutionAmount.truckTrips > 100) {
+                                color = [220, 53, 69];
                                 outline = { color: [139, 0, 0], width: 3 };
                             } else if (pollutionAmount.truckTrips > 50) {
-                                color = [255, 107, 107]; // Medium pollution - red
+                                color = [255, 107, 107];
                                 outline = { color: [231, 76, 60], width: 2 };
+                            } else if (pollutionAmount.truckTrips > 10) {
+                                color = [255, 193, 7];
+                                outline = { color: [243, 156, 18], width: 2 };
                             } else {
                                 color = hexToRgb(node.color);
                             }
@@ -681,7 +675,6 @@
                         }
                     }
                     
-                    // Check if this node has collapsed children
                     const collapsedChildCount = countCollapsedChildren(nodeId, allNodes, allEdges);
                     const hasCollapsedChildren = collapsedNodes.has(nodeId) || collapsedChildCount > 0;
                     const hasChildren = countDirectChildren(nodeId) > 0;
@@ -716,19 +709,20 @@
                             labelText = node.id && node.id.length > 10 ? "WH" : (node.id || node.name);
                         }
                         
-                        // Add collapsed indicator
                         if (collapsedChildCount > 0) {
                             labelText += ` (${collapsedChildCount})`;
                         }
                         
-                        // Add pollution indicator for high-impact entities
-                        if (showPollutionView && node.type === "entity" && node.subtype) {
-                            const distance = calculateDistance(node.coords, bloomingtonCoords);
-                            const pollutionAmount = calculatePollutionExport(node.subtype, distance);
-                            if (pollutionAmount.truckTrips > 100) {
+                        if (showPollutionView && node.type === "entity" && node.subtype && node.pollutionExport) {
+                            const pollutionAmount = node.pollutionExport;
+                            if (pollutionAmount.truckTrips > 200) {
+                                labelText += " 🚨🚨";
+                            } else if (pollutionAmount.truckTrips > 100) {
                                 labelText += " 🚨";
                             } else if (pollutionAmount.truckTrips > 50) {
                                 labelText += " ⚠️";
+                            } else if (pollutionAmount.truckTrips > 10) {
+                                labelText += " ⚡";
                             }
                         }
                         
@@ -756,14 +750,12 @@
             });
         }
         
-        // Function to ensure APN format consistency (pad with zeros if needed)
+        // Function to ensure APN format consistency
         function normalizeAPN(apn) {
             if (!apn) return apn;
             
-            // Convert to string to handle any numeric values
             let apnStr = String(apn).trim();
             
-            // If it looks like a numeric APN (all digits), pad with zeros to 9 digits
             if (/^\d+$/.test(apnStr) && apnStr.length < 9) {
                 apnStr = apnStr.padStart(9, '0');
             }
@@ -824,9 +816,7 @@
             function getPolygonCentroid(coordinates) {
                 let sumX = 0, sumY = 0, count = 0;
                 
-                // Handle MultiPolygon
                 if (coordinates.length > 0 && Array.isArray(coordinates[0][0][0])) {
-                    // It's a MultiPolygon
                     coordinates.forEach(polygon => {
                         polygon.forEach(ring => {
                             ring.forEach(coord => {
@@ -837,7 +827,6 @@
                         });
                     });
                 } else {
-                    // It's a regular Polygon
                     coordinates.forEach(ring => {
                         ring.forEach(coord => {
                             sumX += coord[0];
@@ -852,7 +841,6 @@
 
             // Get warehouse position from GeoJSON or generate one
             function getWarehousePositionFromGeoJson(apn, geoJsonByApn, index, total) {
-                // Try normalized APN first, then raw APN
                 const normalizedApn = normalizeAPN(apn);
                 const feature = geoJsonByApn[normalizedApn] || geoJsonByApn[apn];
                 
@@ -860,7 +848,6 @@
                     return getPolygonCentroid(feature.geometry.coordinates);
                 }
                 
-                // Fallback to generated position if no GeoJSON match
                 const bloomingtonCoords = cityCoords["Bloomington, CA"];
                 const radius = 0.15;
                 const angle = (index / total) * 2 * Math.PI;
@@ -895,7 +882,6 @@
                     if (result && result.length > 0) {
                         const coords = [result[0].location.longitude, result[0].location.latitude];
                         
-                        // Check if coordinates are within reasonable US bounds
                         const lon = coords[0];
                         const lat = coords[1];
                         
@@ -982,24 +968,45 @@
             function buildMindMapData(parsedData, geoJsonByApn) {
                 const mindMapData = {
                     name: "Bloomington, CA",
-                    color: "#e74c3c", // Red to indicate pollution sink
+                    color: "#e74c3c",
                     details: "Pollution sink receiving environmental burden from wealthy areas",
                     type: "root",
                     children: []
                 };
 
+                // First pass: calculate total square footage for proper proportional distribution
+                let totalSqft = 0;
+                const warehouseDataWithSqft = [];
+                
                 parsedData.forEach((row, index) => {
                     const rawApn = row["Assessor parcel number"];
                     const warehouseId = normalizeAPN(rawApn) || `Warehouse_${index}`;
-                    const developer = cleanEntityName(row.Developer);
-                    const purchaser = cleanEntityName(row["Purchaser/Merger"]);
-                    const leasee = cleanEntityName(row.Leasee);
+                    
+                    let sqft = parseInt(row["Building sq.ft."]) || 0;
                     
                     const geoJsonFeature = geoJsonByApn[warehouseId] || geoJsonByApn[rawApn];
-                    let buildingClass = row["Building classification"] || "Warehouse";
-                    let yearBuilt = row["Year built/approved"];
-                    let acres = row.Acres || 0;
-                    let sqft = row["Building sq.ft."] || 0;
+                    if (geoJsonFeature && geoJsonFeature.properties && geoJsonFeature.properties.shape_area) {
+                        if (sqft === 0 || sqft < geoJsonFeature.properties.shape_area) {
+                            sqft = geoJsonFeature.properties.shape_area;
+                        }
+                    }
+                    
+                    totalSqft += sqft;
+                    warehouseDataWithSqft.push({...row, warehouseId, sqft, geoJsonFeature, index});
+                });
+                
+                console.log(`Total warehouse square footage: ${totalSqft.toLocaleString()}`);
+
+                // Second pass: build warehouse nodes with proportional pollution calculations
+                warehouseDataWithSqft.forEach((warehouseData) => {
+                    const { warehouseId, sqft, geoJsonFeature, index } = warehouseData;
+                    const developer = cleanEntityName(warehouseData.Developer);
+                    const purchaser = cleanEntityName(warehouseData["Purchaser/Merger"]);
+                    const leasee = cleanEntityName(warehouseData.Leasee);
+                    
+                    let buildingClass = warehouseData["Building classification"] || "Warehouse";
+                    let yearBuilt = warehouseData["Year built/approved"];
+                    let acres = warehouseData.Acres || 0;
                     
                     if (geoJsonFeature && geoJsonFeature.properties) {
                         buildingClass = geoJsonFeature.properties.class || buildingClass;
@@ -1010,20 +1017,26 @@
                         }
                     }
                     
+                    const sqftProportion = ((sqft / totalSqft) * 100).toFixed(1);
+                    
                     const warehouseNode = {
                         name: warehouseId,
                         color: "#8B4513",
-                        details: `${buildingClass} - ${acres} acres, ${parseInt(sqft).toLocaleString()} sq.ft. (${yearBuilt})`,
+                        details: `${buildingClass} - ${acres} acres, ${sqft.toLocaleString()} sq.ft. (${yearBuilt}) - ${sqftProportion}% of total`,
                         type: "warehouse",
-                        data: row,
+                        data: warehouseData,
                         geoJsonFeature: geoJsonFeature,
+                        sqft: sqft,
+                        sqftProportion: parseFloat(sqftProportion),
                         children: []
                     };
 
-                    // Add developer branch with pollution calculation
+                    // Add developer branch with pollution calculation based on sqft
                     if (developer) {
-                        const devOrigin = cleanLocation(row.DevOriginCity);
+                        const devOrigin = cleanLocation(warehouseData.DevOriginCity);
                         if (devOrigin) {
+                            const pollutionExport = calculatePollutionExport('developer', sqft, totalSqft, warehouseData);
+                            
                             warehouseNode.children.push({
                                 name: "Developer",
                                 color: "#2E86C1",
@@ -1036,24 +1049,28 @@
                                         details: `Profits to: ${devOrigin}`,
                                         type: "entity",
                                         subtype: "developer",
-                                        origin: devOrigin
+                                        origin: devOrigin,
+                                        pollutionExport: pollutionExport,
+                                        warehouseSqft: sqft
                                     }
                                 ]
                             });
                         }
                     }
 
-                    // Add purchaser branch with pollution calculation
+                    // Add purchaser branch with pollution calculation based on sqft
                     if (purchaser) {
-                        const purchOrigin = cleanLocation(row.PurchaserOriginCity);
-                        const transactionType = row["Transaction Type"];
+                        const purchOrigin = cleanLocation(warehouseData.PurchaserOriginCity);
+                        const transactionType = warehouseData["Transaction Type"];
                         const validTransactionTypes = ['Purchase', 'Merger', 'Acquisition', 'Joint Venture'];
                         const cleanTransactionType = validTransactionTypes.includes(transactionType) ? transactionType : "Purchase";
                         
                         if (purchOrigin) {
+                            const pollutionExport = calculatePollutionExport('purchaser', sqft, totalSqft, warehouseData);
+                            
                             warehouseNode.children.push({
                                 name: "Purchaser/Owner",
-                                color: "#f39c12", // Changed to orange to represent profit flow
+                                color: "#f39c12",
                                 details: `${cleanTransactionType}: ${purchaser}`,
                                 type: "relationship",
                                 children: [
@@ -1063,17 +1080,21 @@
                                         details: `Profits to: ${purchOrigin}`,
                                         type: "entity",
                                         subtype: "purchaser",
-                                        origin: purchOrigin
+                                        origin: purchOrigin,
+                                        pollutionExport: pollutionExport,
+                                        warehouseSqft: sqft
                                     }
                                 ]
                             });
                         }
                     }
 
-                    // Add leasee branch
+                    // Add leasee branch with pollution calculation based on sqft
                     if (leasee) {
-                        const leaseeOrigin = cleanLocation(row.LeaseeOriginCity);
+                        const leaseeOrigin = cleanLocation(warehouseData.LeaseeOriginCity);
                         if (leaseeOrigin) {
+                            const pollutionExport = calculatePollutionExport('leasee', sqft, totalSqft, warehouseData);
+                            
                             warehouseNode.children.push({
                                 name: "Tenant",
                                 color: "#27AE60",
@@ -1086,7 +1107,9 @@
                                         details: `Based in: ${leaseeOrigin}`,
                                         type: "entity",
                                         subtype: "leasee",
-                                        origin: leaseeOrigin
+                                        origin: leaseeOrigin,
+                                        pollutionExport: pollutionExport,
+                                        warehouseSqft: sqft
                                     }
                                 ]
                             });
@@ -1128,10 +1151,8 @@
                             continue;
                         }
                         
-                        // Calculate pollution export for this entity
                         const distance = calculateDistance(coords, bloomingtonCoords);
-                        const pollutionExport = calculatePollutionExport(node.subtype, distance);
-                        node.pollutionExport = pollutionExport;
+                        node.pollutionExport = node.pollutionExport;
                         node.distanceFromBloomington = distance.toFixed(1);
                     } else {
                         const parentCoords = parent ? nodes[parent].coords : [0, 0];
@@ -1251,7 +1272,7 @@
                     const warehouses = Object.values(nodes).filter(n => n.type === 'warehouse');
                     const externalEntities = Object.values(nodes).filter(n => n.type === 'entity' && n.pollutionExport);
                     
-                    // Calculate total pollution export from all external entities
+                    // Calculate total pollution export from all external entities - should equal actual data
                     let totalPollutionExport = {
                         truckTrips: 0,
                         dieselPM: 0,
@@ -1268,16 +1289,24 @@
                         }
                     });
                     
+                    // Verify totals match original pollution data (within rounding)
+                    console.log("Pollution distribution verification:");
+                    console.log(`Truck trips: ${totalPollutionExport.truckTrips} / ${pollutionData.dailyTruckTrips} (${((totalPollutionExport.truckTrips/pollutionData.dailyTruckTrips)*100).toFixed(1)}%)`);
+                    console.log(`Diesel PM: ${totalPollutionExport.dieselPM.toFixed(2)} / ${pollutionData.dailyDieselPM} (${((totalPollutionExport.dieselPM/pollutionData.dailyDieselPM)*100).toFixed(1)}%)`);
+                    console.log(`NOx: ${totalPollutionExport.nox} / ${pollutionData.dailyNOx} (${((totalPollutionExport.nox/pollutionData.dailyNOx)*100).toFixed(1)}%)`);
+                    console.log(`CO2: ${totalPollutionExport.co2.toFixed(1)} / ${pollutionData.dailyCO2} (${((totalPollutionExport.co2/pollutionData.dailyCO2)*100).toFixed(1)}%)`);
+                    
                     const stats = {
                         totalWarehouses: warehouses.length,
                         totalAcres: warehouses.reduce((sum, w) => sum + (w.data?.Acres || 0), 0),
-                        totalSqft: warehouses.reduce((sum, w) => sum + (w.data?.["Building sq.ft."] || 0), 0),
+                        totalSqft: warehouses.reduce((sum, w) => sum + (w.data?.["Building sq.ft."] || w.sqft || 0), 0),
                         developers: Object.values(nodes).filter(n => n.subtype === 'developer').length,
                         purchasers: Object.values(nodes).filter(n => n.subtype === 'purchaser').length,
                         leasees: Object.values(nodes).filter(n => n.subtype === 'leasee').length,
                         geoJsonFeatures: Object.keys(geoJsonByApn).length,
                         externalEntities: externalEntities.length,
-                        totalPollutionExport: totalPollutionExport
+                        totalPollutionExport: totalPollutionExport,
+                        actualPollutionData: pollutionData
                     };
 
                     console.log("Data processing complete. Pollution export calculated for", externalEntities.length, "external entities");
@@ -1508,7 +1537,8 @@
                                                 infoHtml += `• ${entityNode.pollutionExport.dieselPM} lbs Diesel PM/day<br>`;
                                                 infoHtml += `• ${entityNode.pollutionExport.nox} lbs NOx/day<br>`;
                                                 infoHtml += `• ${entityNode.pollutionExport.co2} tons CO2/day<br>`;
-                                                infoHtml += `• Distance: ${entityNode.distanceFromBloomington} miles`;
+                                                infoHtml += `• Warehouse size: ${entityNode.pollutionExport.warehouseSqft} sq.ft.<br>`;
+                                                infoHtml += `• Share of total: ${entityNode.pollutionExport.sqftProportion}%`;
                                                 infoHtml += `</div></div>`;
                                             }
                                             infoHtml += `</div>`;
@@ -1579,6 +1609,8 @@
                                 infoHtml += `<div><strong>${attrs.pollutionExport.nox}</strong> lbs NOx/day</div>`;
                                 infoHtml += `<div><strong>${attrs.pollutionExport.co2}</strong> metric tons CO2/day</div>`;
                                 infoHtml += `<div style="margin-top: 5px; font-size: 11px; color: #666;">`;
+                                infoHtml += `Warehouse size: ${attrs.pollutionExport.warehouseSqft} sq.ft.<br>`;
+                                infoHtml += `Share of total operations: ${attrs.pollutionExport.sqftProportion}%<br>`;
                                 infoHtml += `Distance: ${attrs.distanceFromBloomington} miles from Bloomington`;
                                 infoHtml += `</div>`;
                                 infoHtml += `</div></div>`;
