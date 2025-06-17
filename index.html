@@ -386,6 +386,7 @@
         let labelLayer = null;
         let pollutionLayer = null;
         let showPollutionView = true;
+        let renderTimeout = null;
         
         // Helper function to convert hex to RGB
         function hexToRgb(hex) {
@@ -445,7 +446,7 @@
         // Function to toggle pollution view
         window.togglePollutionView = function() {
             showPollutionView = !showPollutionView;
-            updateNetworkVisualization();
+            debouncedUpdateVisualization();
         }
         
         // Function to reset cache and reload
@@ -462,7 +463,7 @@
         // Function to expand all nodes
         window.expandAll = function() {
             collapsedNodes.clear();
-            updateNetworkVisualization();
+            debouncedUpdateVisualization();
         }
         
         // Function to collapse all nodes
@@ -472,7 +473,7 @@
                     collapsedNodes.add(nodeId);
                 }
             });
-            updateNetworkVisualization();
+            debouncedUpdateVisualization();
         }
         
         // Function to toggle node expansion
@@ -482,7 +483,17 @@
             } else {
                 collapsedNodes.add(nodeId);
             }
-            updateNetworkVisualization();
+            debouncedUpdateVisualization();
+        }
+        
+        // Debounced update function to prevent too many renders
+        function debouncedUpdateVisualization() {
+            if (renderTimeout) {
+                clearTimeout(renderTimeout);
+            }
+            renderTimeout = setTimeout(() => {
+                updateNetworkVisualization();
+            }, 100);
         }
         
         // Function to check if a node should be visible
@@ -551,6 +562,7 @@
             
             const { Point, Polyline, Graphic, SimpleMarkerSymbol, SimpleLineSymbol, TextSymbol } = window.ArcGISModules;
             
+            // Clear all layers
             nodeLayer.removeAll();
             edgeLayer.removeAll();
             labelLayer.removeAll();
@@ -558,7 +570,12 @@
             
             const bloomingtonCoords = [-117.396, 34.070];
             
-            // Redraw edges with pollution visualization
+            // Batch graphics for better performance
+            const nodeGraphics = [];
+            const edgeGraphics = [];
+            const labelGraphics = [];
+            
+            // Process edges first
             allEdges.forEach(edge => {
                 const fromVisible = isNodeVisible(edge.from, allNodes, allEdges);
                 const toVisible = isNodeVisible(edge.to, allNodes, allEdges);
@@ -623,12 +640,12 @@
                             attributes: edge
                         });
                         
-                        edgeLayer.add(graphic);
+                        edgeGraphics.push(graphic);
                     }
                 }
             });
             
-            // Redraw nodes with pollution impact visualization
+            // Process nodes
             Object.entries(allNodes).forEach(([nodeId, node]) => {
                 if (isNodeVisible(nodeId, allNodes, allEdges)) {
                     const point = new Point({
@@ -677,7 +694,6 @@
                     
                     const collapsedChildCount = countCollapsedChildren(nodeId, allNodes, allEdges);
                     const hasCollapsedChildren = collapsedNodes.has(nodeId) || collapsedChildCount > 0;
-                    const hasChildren = countDirectChildren(nodeId) > 0;
                     
                     if (hasCollapsedChildren) {
                         outline = { color: [231, 76, 60], width: 3 };
@@ -699,7 +715,7 @@
                         }
                     });
                     
-                    nodeLayer.add(graphic);
+                    nodeGraphics.push(graphic);
                     
                     // Add labels for important nodes
                     if (node.type === "root" || node.type === "warehouse" || 
@@ -744,10 +760,15 @@
                             symbol: textSymbol
                         });
                         
-                        labelLayer.add(labelGraphic);
+                        labelGraphics.push(labelGraphic);
                     }
                 }
             });
+            
+            // Add all graphics at once for better performance
+            edgeLayer.addMany(edgeGraphics);
+            nodeLayer.addMany(nodeGraphics);
+            labelLayer.addMany(labelGraphics);
         }
         
         // Function to ensure APN format consistency
@@ -783,9 +804,12 @@
             "esri/symbols/SimpleLineSymbol",
             "esri/symbols/TextSymbol",
             "esri/rest/locator",
-            "esri/widgets/Popup"
+            "esri/widgets/Popup",
+            "esri/layers/FeatureLayer",
+            "esri/renderers/SimpleRenderer"
         ], function(Map, MapView, Graphic, GraphicsLayer, Point, Polygon, Polyline, 
-                   SimpleMarkerSymbol, SimpleFillSymbol, SimpleLineSymbol, TextSymbol, locator, Popup) {
+                   SimpleMarkerSymbol, SimpleFillSymbol, SimpleLineSymbol, TextSymbol, locator, Popup,
+                   FeatureLayer, SimpleRenderer) {
 
             // Store modules globally for use outside require block
             window.ArcGISModules = {
@@ -1328,16 +1352,35 @@
                         container: "viewDiv",
                         map: map,
                         center: [-117.396, 34.070],
-                        zoom: 11
+                        zoom: 11,
+                        constraints: {
+                            snapToZoom: false
+                        }
                     });
                     
                     networkView = view;
 
-                    const warehouseLayer = new GraphicsLayer({ title: "Warehouse Footprints" });
-                    edgeLayer = new GraphicsLayer({ title: "Pollution Flows" });
-                    nodeLayer = new GraphicsLayer({ title: "Entities" });
-                    labelLayer = new GraphicsLayer({ title: "Labels" });
-                    pollutionLayer = new GraphicsLayer({ title: "Pollution Visualization" });
+                    // Create graphics layers with specific rendering settings
+                    const warehouseLayer = new GraphicsLayer({ 
+                        title: "Warehouse Footprints",
+                        blendMode: "normal"
+                    });
+                    edgeLayer = new GraphicsLayer({ 
+                        title: "Pollution Flows",
+                        blendMode: "normal"
+                    });
+                    nodeLayer = new GraphicsLayer({ 
+                        title: "Entities",
+                        blendMode: "normal"
+                    });
+                    labelLayer = new GraphicsLayer({ 
+                        title: "Labels",
+                        blendMode: "normal"
+                    });
+                    pollutionLayer = new GraphicsLayer({ 
+                        title: "Pollution Visualization",
+                        blendMode: "normal"
+                    });
                     
                     map.addMany([warehouseLayer, edgeLayer, nodeLayer, labelLayer, pollutionLayer]);
 
@@ -1378,9 +1421,11 @@
                         </div>
                     `;
                     
-                    // Add warehouse footprints
+                    // Add warehouse footprints with batching for performance
                     console.log("Adding warehouse footprints...");
                     let footprintCount = 0;
+                    const warehouseGraphics = [];
+                    
                     Object.entries(geoJsonByApn).forEach(([apn, feature]) => {
                         if (feature.geometry && (feature.geometry.type === 'Polygon' || feature.geometry.type === 'MultiPolygon')) {
                             try {
@@ -1417,13 +1462,16 @@
                                     }
                                 });
                                 
-                                warehouseLayer.add(polygonGraphic);
+                                warehouseGraphics.push(polygonGraphic);
                                 footprintCount++;
                             } catch (error) {
                                 console.error(`Error adding polygon for APN ${apn}:`, error);
                             }
                         }
                     });
+                    
+                    // Add all warehouse graphics at once
+                    warehouseLayer.addMany(warehouseGraphics);
                     console.log(`Added ${footprintCount} warehouse footprints`);
                     
                     updateNetworkVisualization();
@@ -1431,12 +1479,17 @@
                     document.getElementById("loadingDiv").style.display = "none";
                     document.getElementById("infoPanel").style.display = "block";
                     
-                    // Update extent to show all graphics
-                    if (nodeLayer.graphics.length > 0) {
-                        view.goTo(nodeLayer.graphics.concat(edgeLayer.graphics).concat(warehouseLayer.graphics), {
-                            padding: { top: 50, bottom: 50, left: 50, right: 420 }
-                        });
-                    }
+                    // Update extent to show all graphics after a delay to ensure rendering
+                    setTimeout(() => {
+                        if (nodeLayer.graphics.length > 0 || warehouseLayer.graphics.length > 0) {
+                            const allGraphics = [...nodeLayer.graphics.toArray(), 
+                                               ...edgeLayer.graphics.toArray(), 
+                                               ...warehouseLayer.graphics.toArray()];
+                            view.goTo(allGraphics, {
+                                padding: { top: 50, bottom: 50, left: 50, right: 420 }
+                            });
+                        }
+                    }, 500);
                     
                     // Handle click events
                     view.on("click", function(event) {
@@ -1684,7 +1737,10 @@
                     // Add keyboard shortcuts
                     view.on("key-down", function(event) {
                         if (event.key === "r" || event.key === "R") {
-                            view.goTo(nodeLayer.graphics.concat(edgeLayer.graphics).concat(warehouseLayer.graphics), {
+                            const allGraphics = [...nodeLayer.graphics.toArray(), 
+                                               ...edgeLayer.graphics.toArray(), 
+                                               ...warehouseLayer.graphics.toArray()];
+                            view.goTo(allGraphics, {
                                 padding: { top: 50, bottom: 50, left: 50, right: 420 }
                             });
                         } else if (event.key === "c" || event.key === "C") {
